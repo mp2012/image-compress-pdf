@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>图片压缩 · 打包ZIP · 合成PDF</title>
+<style>
+:root{--blue:#2563eb;--green:#10b981;--red:#ef4444;--purple:#9333ea;--bg:#f1f5f9}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+body{background:var(--bg);color:#1e293b;max-width:1100px;margin:0 auto;padding:30px 16px 60px}
+h1{font-size:24px;text-align:center;margin-bottom:6px;background:linear-gradient(90deg,var(--blue),var(--purple));-webkit-background-clip:text;background-clip:text;color:transparent}
+.subtitle{text-align:center;color:#64748b;font-size:14px;margin-bottom:24px}
+.box{border:2px dashed #94a3b8;border-radius:16px;padding:46px 20px;text-align:center;margin-bottom:20px;cursor:pointer;background:#fff;transition:.2s;font-size:16px;color:#475569}
+.box:hover{border-color:var(--blue);background:#eff6ff;transform:translateY(-2px)}
+.box.drag{border-color:var(--blue);background:#eff6ff}
+input[type=file]{display:none}
+.panel{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.ctrl{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+label{white-space:nowrap;font-weight:600;color:#334155}
+input[type=range]{width:240px;accent-color:var(--blue)}
+.quality-info{min-width:48px;font-weight:700;color:var(--blue)}
+.hint{color:#94a3b8;font-size:13px}
+select{padding:7px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;background:#fff;color:#334155;cursor:pointer}
+.btns{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0}
+button{background:var(--blue);color:#fff;border:none;padding:11px 22px;border-radius:10px;cursor:pointer;font-size:15px;font-weight:600;box-shadow:0 2px 6px rgba(37,99,235,.25);transition:.15s}
+button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 12px rgba(37,99,235,.35)}
+button:disabled{background:#94a3b8;cursor:not-allowed;box-shadow:none}
+button.dl-one{padding:5px 10px;font-size:12px;background:var(--green);box-shadow:none}
+button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
+.clear-btn{background:var(--red);box-shadow:0 2px 6px rgba(239,68,68,.25)}
+.pdf-btn{background:var(--purple);box-shadow:0 2px 6px rgba(147,51,234,.25)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin:20px 0}
+.card{border:1px solid #e2e8f0;border-radius:12px;padding:14px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04);transition:.15s;cursor:grab}
+.card:active{cursor:grabbing}
+.card:hover{box-shadow:0 4px 14px rgba(0,0,0,.08)}
+.card img{width:100%;height:200px;object-fit:contain;background:#f8fafc;border-radius:8px;margin:6px 0}
+.info{font-size:13px;color:#475569;margin:3px 0}
+.estimate{margin:14px 0;font-weight:700;color:var(--purple);font-size:15px;text-align:center;background:#faf5ff;padding:10px;border-radius:10px}
+.footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:40px;line-height:1.9}
+.footer a{color:#64748b;text-decoration:none}
+.footer a:hover{color:#2563eb;text-decoration:underline}
+</style>
+<!-- JSZip 用于打包ZIP -->
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<!-- jsPDF 用于生成PDF -->
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+</head>
+<body>
+<h1>图片批量压缩 · 打包ZIP · 合成PDF</h1>
+<div class="subtitle">支持 JPG / PNG，扫描图铺满 A4 不变形</div>
+<div class="box" id="dropBox">
+  <div style="font-size:32px;margin-bottom:8px">＋</div>
+  <p>点击此处，或将多张图片拖拽到这里</p>
+  <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png" multiple>
+</div>
+<div class="panel">
+  <div class="ctrl">
+    <label>压缩质量：</label>
+    <input type="range" id="quality" min="0.1" max="0.95" step="0.05" value="0.7">
+    <span class="quality-info" id="qualityVal">0.7</span>
+    <span class="hint">数值越小体积越小，松手后自动重压缩</span>
+  </div>
+  <div class="ctrl" style="margin-top:12px">
+    <label>排序方式：</label>
+    <select id="sortBy">
+      <option value="manual">手动（拖拽卡片）</option>
+      <option value="name">按名称</option>
+      <option value="mtime">按修改时间（新→旧）</option>
+    </select>
+    <span class="hint">自动排序将覆盖手动顺序</span>
+  </div>
+  <div class="ctrl" style="margin-top:12px">
+    <label>PDF 排版：</label>
+    <select id="pdfMode">
+      <option value="fit">铺满居中（竖版A4）</option>
+      <option value="auto">智能横竖自适应</option>
+      <option value="cover">裁切铺满（不留白）</option>
+      <option value="ratio">按原图比例页面</option>
+      <option value="grid">一页多图拼版</option>
+    </select>
+    <span class="hint">决定 PDF 中图片的排布方式</span>
+  </div>
+</div>
+<div class="btns">
+  <button id="downloadZipBtn" disabled>打包下载 ZIP</button>
+  <button class="pdf-btn" id="downloadPdfBtn" disabled>合成 PDF（铺满A4）</button>
+  <button class="clear-btn" id="clearBtn">清空列表</button>
+</div>
+<div id="pdfEstimate" class="estimate"></div>
+<p class="hint" style="text-align:center;margin:4px 0 12px">拖拽卡片可手动排序，顺序将决定 ZIP 与 PDF 中的排列</p>
+<div class="grid" id="resultGrid"></div>
+<div class="footer">
+  所有处理均在本地浏览器完成，图片不会上传服务器<br>
+  by <a href="https://github.com/mp2012/image-compress-pdf" target="_blank" rel="noopener">mp2012</a> · 源码
+</div>
+
+<script>
+const { jsPDF } = window.jspdf;
+const dropBox = document.getElementById('dropBox')
+const fileInput = document.getElementById('fileInput')
+const qualityInput = document.getElementById('quality')
+const qualityVal = document.getElementById('qualityVal')
+const resultGrid = document.getElementById('resultGrid')
+const downloadZipBtn = document.getElementById('downloadZipBtn')
+const downloadPdfBtn = document.getElementById('downloadPdfBtn')
+const clearBtn = document.getElementById('clearBtn')
+const sortBy = document.getElementById('sortBy')
+const pdfMode = document.getElementById('pdfMode')
+
+let taskList = [] // {name, originFile, compressedBlob, compressedUrl, originSize}
+let dragIndex = null // 拖拽排序时的源索引
+
+qualityInput.oninput = ()=>{
+  qualityVal.textContent = qualityInput.value
+}
+// 拖动时只更新数值，松手(onchange)再统一重压缩，避免卡顿
+qualityInput.onchange = ()=>{
+  reCompressAll()
+}
+dropBox.onclick = ()=>fileInput.click()
+
+// 拖拽上传
+dropBox.ondragover = e=>{e.preventDefault();dropBox.classList.add('drag')}
+dropBox.ondragleave = ()=>dropBox.classList.remove('drag')
+dropBox.ondrop = e=>{
+  e.preventDefault()
+  dropBox.classList.remove('drag')
+  const files = Array.from(e.dataTransfer.files)
+  handleFiles(files)
+}
+fileInput.onchange = ()=>{
+  const files = Array.from(fileInput.files)
+  fileInput.value = ''  // 重置，便于再次选择相同文件
+  handleFiles(files)
+}
+
+clearBtn.onclick = ()=>{
+  for(const item of taskList){
+    if(item.compressedUrl) URL.revokeObjectURL(item.compressedUrl)
+  }
+  taskList = []
+  sortBy.value = 'manual'
+  renderList()
+  downloadZipBtn.disabled = true
+  downloadPdfBtn.disabled = true
+}
+
+sortBy.onchange = ()=>{
+  const mode = sortBy.value
+  if(mode === 'name'){
+    taskList.sort((a,b)=> a.name.localeCompare(b.name, 'zh-Hans-CN', {numeric:true}))
+  } else if(mode === 'mtime'){
+    taskList.sort((a,b)=> (b.originFile?.lastModified || 0) - (a.originFile?.lastModified || 0))
+  }
+  renderList()
+}
+
+function formatSize(b){
+  if(b<1024) return b+' B'
+  if(b<1024*1024) return (b/1024).toFixed(2)+' KB'
+  return (b/(1024*1024)).toFixed(2)+' MB'
+}
+
+function handleFiles(files){
+  for(const f of files){
+    if(!f.type.startsWith('image/')) continue
+    taskList.push({
+      name: f.name,
+      originFile: f,
+      originSize: f.size,
+      compressedBlob: null,
+      compressedUrl: ''
+    })
+  }
+  sortBy.value = 'manual'  // 新增图片会打乱已排序顺序，回到手动
+  renderList()
+  reCompressAll()
+}
+
+async function reCompressAll(){
+  const q = parseFloat(qualityInput.value)
+  for(const item of taskList){
+    await compressOne(item, q)
+  }
+  renderList()
+  const hasCompressed = taskList.filter(i=>i.compressedBlob).length > 0
+  downloadZipBtn.disabled = !hasCompressed
+  downloadPdfBtn.disabled = !hasCompressed
+}
+
+function compressOne(task, quality){
+  return new Promise(resolve=>{
+    const reader = new FileReader()
+    reader.onerror = ()=>resolve()       // 读取失败，跳过该图，避免卡死
+    reader.onload = e=>{
+      const img = new Image()
+      img.onerror = ()=>resolve()        // 解码失败，跳过该图
+      img.onload = ()=>{
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        ctx.fillStyle = '#fff'           // 处理 PNG 透明背景，避免变黑
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(img, 0, 0)
+        canvas.toBlob(blob=>{
+          if(task.compressedUrl) URL.revokeObjectURL(task.compressedUrl) // 释放旧 URL
+          task.compressedBlob = blob
+          task.compressedUrl = URL.createObjectURL(blob)
+          resolve()
+        }, 'image/jpeg', quality)
+      }
+      img.src = e.target.result
+    }
+    reader.readAsDataURL(task.originFile)
+  })
+}
+
+function renderList(){
+  resultGrid.innerHTML = ''
+  taskList.forEach((item, i)=>{
+    const card = document.createElement('div')
+    card.className = 'card'
+    card.draggable = true
+    card.dataset.idx = i
+    card.ondragstart = e=>{
+      dragIndex = i
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', String(i))
+    }
+    card.ondragover = e=>{
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      card.style.outline = '2px dashed #2563eb'
+    }
+    card.ondragleave = ()=>{ card.style.outline = '' }
+    card.ondrop = e=>{
+      e.preventDefault()
+      card.style.outline = ''
+      const targetIdx = i
+      if(dragIndex === null || dragIndex === targetIdx) return
+      const moved = taskList.splice(dragIndex, 1)[0]
+      const insertAt = dragIndex < targetIdx ? targetIdx - 1 : targetIdx
+      taskList.splice(insertAt, 0, moved)
+      dragIndex = null
+      sortBy.value = 'manual'  // 手动拖拽后如实反映为手动
+      renderList()
+    }
+    card.ondragend = ()=>{ dragIndex = null; card.style.outline = '' }
+    let savedText = '处理中...'
+    if(item.compressedBlob){
+      const pct = Math.round((1 - item.compressedBlob.size / item.originSize) * 100)
+      savedText = pct > 0 ? `节省 ${pct}%` : (pct < 0 ? `增大 ${-pct}%` : '无变化')
+    }
+    card.innerHTML = `
+      <div class="info">文件名：${item.name}</div>
+      <div class="info">原图：${formatSize(item.originSize)}</div>
+      <div class="info">压缩后：${item.compressedBlob ? formatSize(item.compressedBlob.size) : '处理中...'}</div>
+      <div class="info" style="color:${savedText.startsWith('节省') ? '#10b981' : (savedText.startsWith('增大') ? '#ef4444' : '#444')}">${savedText}</div>
+      ${item.compressedUrl ? `<img src="${item.compressedUrl}" draggable="false" />` : '<div>等待压缩</div>'}
+      <div style="margin-top:8px">
+        <button class="dl-one" data-name="${item.name}">单张下载</button>
+      </div>
+    `
+    resultGrid.appendChild(card)
+  })
+  // 单张下载
+  document.querySelectorAll('.dl-one').forEach(btn=>{
+    btn.onclick = ()=>{
+      const name = btn.dataset.name
+      const t = taskList.find(x=>x.name===name)
+      if(!t || !t.compressedBlob) return
+      const a = document.createElement('a')
+      a.href = t.compressedUrl
+      a.download = '压缩_' + name.replace(/\.\w+$/, '.jpg')
+      a.click()
+    }
+  })
+  updateEstimate()
+}
+
+function updateEstimate(){
+  const est = document.getElementById('pdfEstimate')
+  // jsPDF 对 JPEG 基本原样嵌入，PDF 大小≈各压缩图之和 + 少量结构开销，故按图片总大小估算
+  const total = taskList.reduce((s,i)=>s + (i.compressedBlob ? i.compressedBlob.size : 0), 0)
+  est.textContent = total > 0 ? `预计合并 PDF 大小（约）：${formatSize(total)}` : ''
+}
+
+function blobToDataURL(blob){
+  return new Promise((resolve,reject)=>{
+    const r = new FileReader()
+    r.onload = ()=>resolve(r.result)
+    r.onerror = ()=>reject()
+    r.readAsDataURL(blob)
+  })
+}
+
+function loadImage(src){
+  return new Promise(resolve=>{
+    const img = new Image()
+    img.onload = ()=>resolve({el:img, w:img.width, h:img.height})
+    img.onerror = ()=>resolve(null)
+    img.src = src
+  })
+}
+
+// 打包ZIP下载
+downloadZipBtn.onclick = async ()=>{
+  downloadZipBtn.disabled = true
+  const zip = new JSZip()
+  const used = new Set()
+  for(const item of taskList){
+    if(!item.compressedBlob) continue
+    let outName = 'compressed_' + item.name.replace(/\.\w+$/, '.jpg')
+    if(used.has(outName)){           // 同名文件加序号去重
+      const dot = outName.lastIndexOf('.')
+      const base = outName.slice(0, dot)
+      const ext = outName.slice(dot)
+      let idx = 1
+      while(used.has(`${base}_${idx}${ext}`)) idx++
+      outName = `${base}_${idx}${ext}`
+    }
+    used.add(outName)
+    zip.file(outName, item.compressedBlob)
+  }
+  const zipBlob = await zip.generateAsync({type:'blob'})
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(zipBlob)
+  a.download = 'compressed_images.zip'
+  a.click()
+  URL.revokeObjectURL(a.href)
+  downloadZipBtn.disabled = false
+}
+
+// 合成PDF下载：支持多种排版模式（由 pdfMode 决定）
+downloadPdfBtn.onclick = async ()=>{
+  const originalText = downloadPdfBtn.textContent
+  downloadPdfBtn.disabled = true
+  downloadZipBtn.disabled = true
+  downloadPdfBtn.textContent = '生成中...'
+  try {
+    const mode = pdfMode.value
+    const PER_PAGE = 4 // 一页多图：2×2
+
+    // 预加载所有有效图片及其尺寸
+    const imgs = []
+    for(const item of taskList){
+      if(!item.compressedBlob) continue
+      const data = await blobToDataURL(item.compressedBlob)
+      const dim = await loadImage(data)
+      if(dim) imgs.push({base64:data, ...dim})
+    }
+    if(imgs.length === 0) return
+
+    const pdf = new jsPDF({unit:'mm', format:'a4', orientation:'p'})
+
+    for(let i=0;i<imgs.length;i++){
+      const it = imgs[i]
+      const imgRatio = it.w / it.h
+
+      if(mode === 'grid'){
+        if(i>0) pdf.addPage('a4','p')
+        const margin = 8, cols = 2, rows = 2
+        const cellW = (210 - 2*margin) / cols
+        const cellH = (297 - 2*margin) / rows
+        const idx = i % PER_PAGE
+        const cx = margin + (idx % cols) * cellW
+        const cy = margin + Math.floor(idx / cols) * cellH
+        const cellRatio = cellW / cellH
+        let dw, dh, dx, dy
+        if(imgRatio >= cellRatio){ dw=cellW; dh=cellW/imgRatio; dx=cx; dy=cy+(cellH-dh)/2 }
+        else { dh=cellH; dw=cellH*imgRatio; dx=cx+(cellW-dw)/2; dy=cy }
+        pdf.addImage(it.base64,'JPEG',dx,dy,dw,dh)
+        continue
+      }
+
+      if(mode === 'ratio'){
+        const w = 210
+        const h = Math.max(1, 210 * (it.h / it.w))
+        pdf.addPage([w, h])
+        pdf.addImage(it.base64,'JPEG',0,0,w,h)
+        continue
+      }
+
+      // fit / auto / cover：基于 A4，auto/cover 可横竖自适应
+      const landscape = (mode === 'auto' || mode === 'cover') && it.w >= it.h
+      const pw = landscape ? 297 : 210
+      const ph = landscape ? 210 : 297
+      if(i === 0){
+        if(landscape) pdf.setPageOrientation('l')
+      } else {
+        pdf.addPage('a4', landscape ? 'l' : 'p')
+      }
+
+      if(mode === 'cover'){
+        // 裁切填满整页（不变形，超出部分裁掉）
+        const px = 3.7795 // 约 96dpi
+        const c = document.createElement('canvas')
+        c.width = Math.round(pw * px)
+        c.height = Math.round(ph * px)
+        const ctx = c.getContext('2d')
+        const pageRatio = pw / ph
+        let sx, sy, sw, sh
+        if(imgRatio > pageRatio){ sh=it.h; sw=it.h*pageRatio; sx=(it.w-sw)/2; sy=0 }
+        else { sw=it.w; sh=it.w/pageRatio; sx=0; sy=(it.h-sh)/2 }
+        ctx.drawImage(it.el, sx, sy, sw, sh, 0, 0, c.width, c.height)
+        pdf.addImage(c.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pw, ph)
+      } else {
+        // fit：等比居中（contain），不变形、留白
+        const pageRatio = pw / ph
+        let dw, dh, dx, dy
+        if(imgRatio >= pageRatio){ dw=pw; dh=pw/imgRatio; dx=0; dy=(ph-dh)/2 }
+        else { dh=ph; dw=ph*imgRatio; dx=(pw-dw)/2; dy=0 }
+        pdf.addImage(it.base64,'JPEG',dx,dy,dw,dh)
+      }
+    }
+
+    if(mode === 'ratio') pdf.deletePage(1) // 删除初始空白页
+    pdf.save('压缩图片.pdf')
+  } finally {
+    downloadPdfBtn.disabled = false
+    downloadZipBtn.disabled = false
+    downloadPdfBtn.textContent = originalText
+  }
+}
+</script>
+</body>
+</html>
