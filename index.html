@@ -39,6 +39,8 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 .footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:40px;line-height:1.9}
 .footer a{color:#64748b;text-decoration:none}
 .footer a:hover{color:#2563eb;text-decoration:underline}
+.lang-btn{position:fixed;top:16px;right:16px;background:#fff;color:#334155;border:1px solid #cbd5e1;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.08);z-index:10}
+.lang-btn:hover{border-color:var(--blue);color:var(--blue)}
 </style>
 <!-- JSZip 用于打包ZIP -->
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -46,52 +48,53 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 </head>
 <body>
-<h1>图片批量压缩 · 打包ZIP · 合成PDF</h1>
-<div class="subtitle">支持 JPG / PNG，扫描图铺满 A4 不变形</div>
+<button id="langBtn" class="lang-btn">EN</button>
+<h1 data-i18n="h1">图片批量压缩 · 打包ZIP · 合成PDF</h1>
+<div class="subtitle" data-i18n="subtitle">支持 JPG / PNG，扫描图铺满 A4 不变形</div>
 <div class="box" id="dropBox">
   <div style="font-size:32px;margin-bottom:8px">＋</div>
-  <p>点击此处，或将多张图片拖拽到这里</p>
+  <p data-i18n="dropTitle">点击此处，或将多张图片拖拽到这里</p>
   <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png" multiple>
 </div>
 <div class="panel">
   <div class="ctrl">
-    <label>压缩质量：</label>
+    <label data-i18n="qualityLabel">压缩质量：</label>
     <input type="range" id="quality" min="0.1" max="0.95" step="0.05" value="0.7">
     <span class="quality-info" id="qualityVal">0.7</span>
-    <span class="hint">数值越小体积越小，松手后自动重压缩</span>
+    <span class="hint" data-i18n="qualityHint">数值越小体积越小，松手后自动重压缩</span>
   </div>
   <div class="ctrl" style="margin-top:12px">
-    <label>排序方式：</label>
+    <label data-i18n="sortLabel">排序方式：</label>
     <select id="sortBy">
-      <option value="manual">手动（拖拽卡片）</option>
-      <option value="name">按名称</option>
-      <option value="mtime">按修改时间（新→旧）</option>
+      <option value="manual" data-i18n="sortManual">手动（拖拽卡片）</option>
+      <option value="name" data-i18n="sortName">按名称</option>
+      <option value="mtime" data-i18n="sortMtime">按修改时间（新→旧）</option>
     </select>
-    <span class="hint">自动排序将覆盖手动顺序</span>
+    <span class="hint" data-i18n="sortHint">自动排序将覆盖手动顺序</span>
   </div>
   <div class="ctrl" style="margin-top:12px">
-    <label>PDF 排版：</label>
+    <label data-i18n="pdfModeLabel">PDF 排版：</label>
     <select id="pdfMode">
-      <option value="fit">铺满居中（竖版A4）</option>
-      <option value="auto">智能横竖自适应</option>
-      <option value="cover">裁切铺满（不留白）</option>
-      <option value="ratio">按原图比例页面</option>
-      <option value="grid">一页多图拼版</option>
+      <option value="fit" data-i18n="modeFit">铺满居中（竖版A4）</option>
+      <option value="auto" data-i18n="modeAuto">智能横竖自适应</option>
+      <option value="cover" data-i18n="modeCover">裁切铺满（不留白）</option>
+      <option value="ratio" data-i18n="modeRatio">按原图比例页面</option>
+      <option value="grid" data-i18n="modeGrid">一页多图拼版</option>
     </select>
-    <span class="hint">决定 PDF 中图片的排布方式</span>
+    <span class="hint" data-i18n="pdfModeHint">决定 PDF 中图片的排布方式</span>
   </div>
 </div>
 <div class="btns">
-  <button id="downloadZipBtn" disabled>打包下载 ZIP</button>
-  <button class="pdf-btn" id="downloadPdfBtn" disabled>合成 PDF（铺满A4）</button>
-  <button class="clear-btn" id="clearBtn">清空列表</button>
+  <button id="downloadZipBtn" data-i18n="zipBtn" disabled>打包下载 ZIP</button>
+  <button class="pdf-btn" id="downloadPdfBtn" data-i18n="pdfBtn" disabled>合成 PDF（铺满A4）</button>
+  <button class="clear-btn" id="clearBtn" data-i18n="clearBtn">清空列表</button>
 </div>
 <div id="pdfEstimate" class="estimate"></div>
-<p class="hint" style="text-align:center;margin:4px 0 12px">拖拽卡片可手动排序，顺序将决定 ZIP 与 PDF 中的排列</p>
+<p class="hint" style="text-align:center;margin:4px 0 12px" data-i18n="dragHint">拖拽卡片可手动排序，顺序将决定 ZIP 与 PDF 中的排列</p>
 <div class="grid" id="resultGrid"></div>
 <div class="footer">
-  所有处理均在本地浏览器完成，图片不会上传服务器<br>
-  by <a href="https://github.com/mp2012/image-compress-pdf" target="_blank" rel="noopener">mp2012</a> · 源码
+  <span data-i18n="footerPrivacy">所有处理均在本地浏览器完成，图片不会上传服务器</span><br>
+  by <a href="https://github.com/mp2012/image-compress-pdf" target="_blank" rel="noopener">mp2012</a> · <span data-i18n="source">源码</span>
 </div>
 
 <script>
@@ -148,7 +151,7 @@ clearBtn.onclick = ()=>{
 sortBy.onchange = ()=>{
   const mode = sortBy.value
   if(mode === 'name'){
-    taskList.sort((a,b)=> a.name.localeCompare(b.name, 'zh-Hans-CN', {numeric:true}))
+    taskList.sort((a,b)=> a.name.localeCompare(b.name, lang === 'zh' ? 'zh-Hans-CN' : 'en', {numeric:true}))
   } else if(mode === 'mtime'){
     taskList.sort((a,b)=> (b.originFile?.lastModified || 0) - (a.originFile?.lastModified || 0))
   }
@@ -247,19 +250,23 @@ function renderList(){
       renderList()
     }
     card.ondragend = ()=>{ dragIndex = null; card.style.outline = '' }
-    let savedText = '处理中...'
+    let savedText, savedColor
     if(item.compressedBlob){
       const pct = Math.round((1 - item.compressedBlob.size / item.originSize) * 100)
-      savedText = pct > 0 ? `节省 ${pct}%` : (pct < 0 ? `增大 ${-pct}%` : '无变化')
+      savedText = pct > 0 ? `${t('saved')} ${pct}%` : (pct < 0 ? `${t('increased')} ${-pct}%` : t('noChange'))
+      savedColor = pct > 0 ? '#10b981' : (pct < 0 ? '#ef4444' : '#444')
+    } else {
+      savedText = t('processing')
+      savedColor = '#444'
     }
     card.innerHTML = `
-      <div class="info">文件名：${item.name}</div>
-      <div class="info">原图：${formatSize(item.originSize)}</div>
-      <div class="info">压缩后：${item.compressedBlob ? formatSize(item.compressedBlob.size) : '处理中...'}</div>
-      <div class="info" style="color:${savedText.startsWith('节省') ? '#10b981' : (savedText.startsWith('增大') ? '#ef4444' : '#444')}">${savedText}</div>
-      ${item.compressedUrl ? `<img src="${item.compressedUrl}" draggable="false" />` : '<div>等待压缩</div>'}
+      <div class="info">${t('cardName')}${item.name}</div>
+      <div class="info">${t('cardOrig')}${formatSize(item.originSize)}</div>
+      <div class="info">${t('cardComp')}${item.compressedBlob ? formatSize(item.compressedBlob.size) : t('processing')}</div>
+      <div class="info" style="color:${savedColor}">${savedText}</div>
+      ${item.compressedUrl ? `<img src="${item.compressedUrl}" draggable="false" />` : `<div>${t('waiting')}</div>`}
       <div style="margin-top:8px">
-        <button class="dl-one" data-name="${item.name}">单张下载</button>
+        <button class="dl-one" data-name="${item.name}">${t('dlOne')}</button>
       </div>
     `
     resultGrid.appendChild(card)
@@ -272,7 +279,7 @@ function renderList(){
       if(!t || !t.compressedBlob) return
       const a = document.createElement('a')
       a.href = t.compressedUrl
-      a.download = '压缩_' + name.replace(/\.\w+$/, '.jpg')
+      a.download = t('dlNamePrefix') + name.replace(/\.\w+$/, '.jpg')
       a.click()
     }
   })
@@ -283,7 +290,108 @@ function updateEstimate(){
   const est = document.getElementById('pdfEstimate')
   // jsPDF 对 JPEG 基本原样嵌入，PDF 大小≈各压缩图之和 + 少量结构开销，故按图片总大小估算
   const total = taskList.reduce((s,i)=>s + (i.compressedBlob ? i.compressedBlob.size : 0), 0)
-  est.textContent = total > 0 ? `预计合并 PDF 大小（约）：${formatSize(total)}` : ''
+  est.textContent = total > 0 ? t('estimate', formatSize(total)) : ''
+}
+
+const i18n = {
+  zh: {
+    title:'图片压缩 · 打包ZIP · 合成PDF',
+    h1:'图片批量压缩 · 打包ZIP · 合成PDF',
+    subtitle:'支持 JPG / PNG，扫描图铺满 A4 不变形',
+    dropTitle:'点击此处，或将多张图片拖拽到这里',
+    qualityLabel:'压缩质量：',
+    qualityHint:'数值越小体积越小，松手后自动重压缩',
+    sortLabel:'排序方式：',
+    sortHint:'自动排序将覆盖手动顺序',
+    pdfModeLabel:'PDF 排版：',
+    pdfModeHint:'决定 PDF 中图片的排布方式',
+    zipBtn:'打包下载 ZIP',
+    pdfBtn:'合成 PDF（铺满A4）',
+    clearBtn:'清空列表',
+    dragHint:'拖拽卡片可手动排序，顺序将决定 ZIP 与 PDF 中的排列',
+    cardName:'文件名：',
+    cardOrig:'原图：',
+    cardComp:'压缩后：',
+    processing:'处理中...',
+    waiting:'等待压缩',
+    dlOne:'单张下载',
+    saved:'节省',
+    increased:'增大',
+    noChange:'无变化',
+    footerPrivacy:'所有处理均在本地浏览器完成，图片不会上传服务器',
+    source:'源码',
+    generating:'生成中...',
+    estimate:(s)=>`预计合并 PDF 大小（约）：${s}`,
+    sortManual:'手动（拖拽卡片）',
+    sortName:'按名称',
+    sortMtime:'按修改时间（新→旧）',
+    modeFit:'铺满居中（竖版A4）',
+    modeAuto:'智能横竖自适应',
+    modeCover:'裁切铺满（不留白）',
+    modeRatio:'按原图比例页面',
+    modeGrid:'一页多图拼版',
+    dlNamePrefix:'压缩_',
+    zipName:'compressed_images.zip',
+    pdfName:'压缩图片.pdf'
+  },
+  en: {
+    title:'Image Compressor · ZIP · PDF',
+    h1:'Batch Image Compress · ZIP · PDF',
+    subtitle:'Supports JPG / PNG, scans fit A4 without distortion',
+    dropTitle:'Click here, or drag & drop multiple images',
+    qualityLabel:'Quality:',
+    qualityHint:'Lower = smaller files; re-compresses on release',
+    sortLabel:'Sort by:',
+    sortHint:'Auto sort overrides manual order',
+    pdfModeLabel:'PDF layout:',
+    pdfModeHint:'How images are arranged in the PDF',
+    zipBtn:'Download ZIP',
+    pdfBtn:'Build PDF (fit A4)',
+    clearBtn:'Clear list',
+    dragHint:'Drag cards to reorder — order affects ZIP & PDF',
+    cardName:'Name: ',
+    cardOrig:'Original: ',
+    cardComp:'Compressed: ',
+    processing:'Processing...',
+    waiting:'Waiting...',
+    dlOne:'Download',
+    saved:'Saved',
+    increased:'Increased',
+    noChange:'No change',
+    footerPrivacy:'All processing runs locally in your browser — images are never uploaded.',
+    source:'Source',
+    generating:'Generating...',
+    estimate:(s)=>`Estimated merged PDF size (approx): ${s}`,
+    sortManual:'Manual (drag cards)',
+    sortName:'Name',
+    sortMtime:'Modified time (new→old)',
+    modeFit:'Fit centered (portrait A4)',
+    modeAuto:'Smart auto orientation',
+    modeCover:'Cover crop (no margin)',
+    modeRatio:'Original aspect ratio page',
+    modeGrid:'Multi-image grid',
+    dlNamePrefix:'compressed_',
+    zipName:'compressed_images.zip',
+    pdfName:'compressed_images.pdf'
+  }
+}
+let lang = localStorage.getItem('lang') || 'zh'
+function t(key, ...args){
+  const v = i18n[lang][key]
+  return typeof v === 'function' ? v(...args) : v
+}
+const langBtn = document.getElementById('langBtn')
+function applyLang(){
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
+  document.title = t('title')
+  document.querySelectorAll('[data-i18n]').forEach(el=>{ el.textContent = t(el.dataset.i18n) })
+  langBtn.textContent = lang === 'zh' ? 'EN' : '中文'
+  renderList()
+}
+langBtn.onclick = ()=>{
+  lang = lang === 'zh' ? 'en' : 'zh'
+  localStorage.setItem('lang', lang)
+  applyLang()
 }
 
 function blobToDataURL(blob){
@@ -326,7 +434,7 @@ downloadZipBtn.onclick = async ()=>{
   const zipBlob = await zip.generateAsync({type:'blob'})
   const a = document.createElement('a')
   a.href = URL.createObjectURL(zipBlob)
-  a.download = 'compressed_images.zip'
+  a.download = t('zipName')
   a.click()
   URL.revokeObjectURL(a.href)
   downloadZipBtn.disabled = false
@@ -334,10 +442,9 @@ downloadZipBtn.onclick = async ()=>{
 
 // 合成PDF下载：支持多种排版模式（由 pdfMode 决定）
 downloadPdfBtn.onclick = async ()=>{
-  const originalText = downloadPdfBtn.textContent
   downloadPdfBtn.disabled = true
   downloadZipBtn.disabled = true
-  downloadPdfBtn.textContent = '生成中...'
+  downloadPdfBtn.textContent = t('generating')
   try {
     const mode = pdfMode.value
     const PER_PAGE = 4 // 一页多图：2×2
@@ -416,13 +523,14 @@ downloadPdfBtn.onclick = async ()=>{
     }
 
     if(mode === 'ratio') pdf.deletePage(1) // 删除初始空白页
-    pdf.save('压缩图片.pdf')
+    pdf.save(t('pdfName'))
   } finally {
     downloadPdfBtn.disabled = false
     downloadZipBtn.disabled = false
-    downloadPdfBtn.textContent = originalText
+    downloadPdfBtn.textContent = t('pdfBtn')
   }
 }
+applyLang()
 </script>
 </body>
 </html>
