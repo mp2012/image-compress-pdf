@@ -67,6 +67,17 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
     <span class="hint" data-i18n="qualityHint">数值越小体积越小，松手后自动重压缩</span>
   </div>
   <div class="ctrl" style="margin-top:12px">
+    <label data-i18n="sizeLabel">目标尺寸：</label>
+    <select id="sizeMode">
+      <option value="original" data-i18n="sizeOriginal">原尺寸（仅压质量）</option>
+      <option value="long" data-i18n="sizeLong">按长边等比缩放</option>
+      <option value="fixed" data-i18n="sizeFixed">固定宽高（等比留白）</option>
+    </select>
+    <span id="sizeLongWrap" style="display:none"><span data-i18n="longEdge">长边</span> <input id="sizeLong" type="number" min="1" value="1920" style="width:72px"> px</span>
+    <span id="sizeFixedWrap" style="display:none"><input id="sizeW" type="number" min="1" value="800" style="width:64px"> <span data-i18n="times">×</span> <input id="sizeH" type="number" min="1" value="600" style="width:64px"> px</span>
+    <span class="hint" data-i18n="sizeHint">把图片统一到目标尺寸后再压缩</span>
+  </div>
+  <div class="ctrl" style="margin-top:12px">
     <label data-i18n="sortLabel">排序方式：</label>
     <select id="sortBy">
       <option value="manual" data-i18n="sortManual">手动（拖拽卡片）</option>
@@ -118,6 +129,12 @@ const pdfToJpgBtn = document.getElementById('pdfToJpgBtn')
 const clearBtn = document.getElementById('clearBtn')
 const sortBy = document.getElementById('sortBy')
 const pdfMode = document.getElementById('pdfMode')
+const sizeMode = document.getElementById('sizeMode')
+const sizeLong = document.getElementById('sizeLong')
+const sizeW = document.getElementById('sizeW')
+const sizeH = document.getElementById('sizeH')
+const sizeLongWrap = document.getElementById('sizeLongWrap')
+const sizeFixedWrap = document.getElementById('sizeFixedWrap')
 
 let taskList = [] // {name, originFile, compressedBlob, compressedUrl, originSize}
 let dragIndex = null // 拖拽排序时的源索引
@@ -129,6 +146,16 @@ qualityInput.oninput = ()=>{
 qualityInput.onchange = ()=>{
   reCompressAll()
 }
+// 目标尺寸切换：显示对应输入框，并在改动后重压缩
+function syncSizeInputs(){
+  sizeLongWrap.style.display = sizeMode.value === 'long' ? '' : 'none'
+  sizeFixedWrap.style.display = sizeMode.value === 'fixed' ? '' : 'none'
+}
+sizeMode.onchange = ()=>{ syncSizeInputs(); reCompressAll() }
+sizeLong.onchange = ()=>reCompressAll()
+sizeW.onchange = ()=>reCompressAll()
+sizeH.onchange = ()=>reCompressAll()
+syncSizeInputs()
 dropBox.onclick = ()=>fileInput.click()
 
 // 拖拽上传
@@ -209,6 +236,21 @@ async function reCompressAll(){
   pdfToJpgBtn.disabled = !hasPdf
 }
 
+// 根据目标尺寸设置计算输出宽高；fixed 模式返回画布尺寸（绘制时等比留白）
+function computeTarget(w, h){
+  const m = sizeMode.value
+  if(m === 'long'){
+    const L = parseInt(sizeLong.value) || 0
+    if(L > 0){
+      return w >= h ? [L, Math.round(h * L / w)] : [Math.round(w * L / h), L]
+    }
+  } else if(m === 'fixed'){
+    const W = parseInt(sizeW.value) || 0, H = parseInt(sizeH.value) || 0
+    if(W > 0 && H > 0) return [W, H]
+  }
+  return [w, h]
+}
+
 function compressOne(task, quality){
   return new Promise(resolve=>{
     const reader = new FileReader()
@@ -217,13 +259,22 @@ function compressOne(task, quality){
       const img = new Image()
       img.onerror = ()=>resolve()        // 解码失败，跳过该图
       img.onload = ()=>{
+        const [tw, th] = computeTarget(img.width, img.height)
         const canvas = document.createElement('canvas')
-        canvas.width = img.width
-        canvas.height = img.height
+        canvas.width = tw
+        canvas.height = th
         const ctx = canvas.getContext('2d')
         ctx.fillStyle = '#fff'           // 处理 PNG 透明背景，避免变黑
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        ctx.drawImage(img, 0, 0)
+        ctx.fillRect(0, 0, tw, th)
+        let dx = 0, dy = 0, dw = tw, dh = th
+        if(sizeMode.value === 'fixed'){  // 等比 contain 居中，保持比例不变形
+          const ir = img.width / img.height, tr = tw / th
+          if(ir > tr){ dw = tw; dh = tw / ir; dy = (th - dh) / 2 }
+          else { dh = th; dw = th * ir; dx = (tw - dw) / 2 }
+        }
+        ctx.drawImage(img, dx, dy, dw, dh)
+        task.outW = tw
+        task.outH = th
         canvas.toBlob(blob=>{
           if(task.compressedUrl) URL.revokeObjectURL(task.compressedUrl) // 释放旧 URL
           task.compressedBlob = blob
@@ -293,6 +344,7 @@ function renderList(){
         <div class="info">${t('cardName')}${item.name}</div>
         <div class="info">${t('cardOrig')}${formatSize(item.originSize)}</div>
         <div class="info">${t('cardComp')}${item.compressedBlob ? formatSize(item.compressedBlob.size) : t('processing')}</div>
+        <div class="info">${t('cardOut')}${item.compressedBlob && item.outW ? `${item.outW}×${item.outH} px` : t('processing')}</div>
         <div class="info" style="color:${savedColor}">${savedText}</div>
         ${item.compressedUrl ? `<img src="${item.compressedUrl}" draggable="false" />` : `<div>${t('waiting')}</div>`}
         <div style="margin-top:8px">
@@ -373,7 +425,15 @@ const i18n = {
     zipName:'compressed_images.zip',
     pdfName:'merged.pdf',
     pdfToJpgBtn:'PDF 转 JPG（ZIP）',
-    pdfToJpgName:'pdf_images.zip'
+    pdfToJpgName:'pdf_images.zip',
+    sizeLabel:'目标尺寸：',
+    sizeOriginal:'原尺寸（仅压质量）',
+    sizeLong:'按长边等比缩放',
+    sizeFixed:'固定宽高（等比留白）',
+    sizeHint:'把图片统一到目标尺寸后再压缩',
+    longEdge:'长边',
+    times:'×',
+    cardOut:'输出尺寸：'
   },
   en: {
     title:'Image Compressor · ZIP · PDF',
@@ -415,7 +475,15 @@ const i18n = {
     zipName:'compressed_images.zip',
     pdfName:'merged.pdf',
     pdfToJpgBtn:'PDF → JPG (ZIP)',
-    pdfToJpgName:'pdf_images.zip'
+    pdfToJpgName:'pdf_images.zip',
+    sizeLabel:'Target size:',
+    sizeOriginal:'Original (quality only)',
+    sizeLong:'Scale by long edge',
+    sizeFixed:'Fixed W×H (fit, padding)',
+    sizeHint:'Resize to target, then compress',
+    longEdge:'Long edge',
+    times:'×',
+    cardOut:'Output: '
   }
 }
 let lang = localStorage.getItem('lang') || 'zh'
