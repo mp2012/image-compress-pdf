@@ -44,8 +44,9 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 </style>
 <!-- JSZip 用于打包ZIP -->
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<!-- jsPDF 用于生成PDF -->
+<!-- jsPDF 与 pdf-lib 用于生成/合并 PDF -->
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 </head>
 <body>
 <button id="langBtn" class="lang-btn">EN</button>
@@ -54,7 +55,7 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 <div class="box" id="dropBox">
   <div style="font-size:32px;margin-bottom:8px">＋</div>
   <p data-i18n="dropTitle">点击此处，或将多张图片拖拽到这里</p>
-  <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png" multiple>
+  <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png,application/pdf,.pdf" multiple>
 </div>
 <div class="panel">
   <div class="ctrl">
@@ -140,6 +141,7 @@ fileInput.onchange = ()=>{
 clearBtn.onclick = ()=>{
   for(const item of taskList){
     if(item.compressedUrl) URL.revokeObjectURL(item.compressedUrl)
+    if(item.pdfUrl) URL.revokeObjectURL(item.pdfUrl)
   }
   taskList = []
   sortBy.value = 'manual'
@@ -164,18 +166,21 @@ function formatSize(b){
   return (b/(1024*1024)).toFixed(2)+' MB'
 }
 
-function handleFiles(files){
+async function handleFiles(files){
   for(const f of files){
-    if(!f.type.startsWith('image/')) continue
-    taskList.push({
-      name: f.name,
-      originFile: f,
-      originSize: f.size,
-      compressedBlob: null,
-      compressedUrl: ''
-    })
+    const lower = f.name.toLowerCase()
+    if(f.type === 'application/pdf' || lower.endsWith('.pdf')){
+      let pages = 0
+      try{
+        const pdf = await PDFLib.PDFDocument.load(await f.arrayBuffer())
+        pages = pdf.getPageCount()
+      }catch(e){}
+      taskList.push({ type:'pdf', name: f.name, originFile: f, originSize: f.size, pages, pdfUrl:'' })
+    } else if(f.type.startsWith('image/')){
+      taskList.push({ type:'image', name: f.name, originFile: f, originSize: f.size, compressedBlob: null, compressedUrl: '' })
+    }
   }
-  sortBy.value = 'manual'  // 新增图片会打乱已排序顺序，回到手动
+  sortBy.value = 'manual'  // 新增文件会打乱已排序顺序，回到手动
   renderList()
   reCompressAll()
 }
@@ -183,12 +188,14 @@ function handleFiles(files){
 async function reCompressAll(){
   const q = parseFloat(qualityInput.value)
   for(const item of taskList){
+    if(item.type === 'pdf') continue
     await compressOne(item, q)
   }
   renderList()
-  const hasCompressed = taskList.filter(i=>i.compressedBlob).length > 0
-  downloadZipBtn.disabled = !hasCompressed
-  downloadPdfBtn.disabled = !hasCompressed
+  const hasImage = taskList.some(i=>i.type === 'image')
+  const hasAny = taskList.length > 0
+  downloadZipBtn.disabled = !hasImage
+  downloadPdfBtn.disabled = !hasAny
 }
 
 function compressOne(task, quality){
@@ -250,25 +257,39 @@ function renderList(){
       renderList()
     }
     card.ondragend = ()=>{ dragIndex = null; card.style.outline = '' }
-    let savedText, savedColor
-    if(item.compressedBlob){
-      const pct = Math.round((1 - item.compressedBlob.size / item.originSize) * 100)
-      savedText = pct > 0 ? `${t('saved')} ${pct}%` : (pct < 0 ? `${t('increased')} ${-pct}%` : t('noChange'))
-      savedColor = pct > 0 ? '#10b981' : (pct < 0 ? '#ef4444' : '#444')
+    let bodyHtml
+    if(item.type === 'pdf'){
+      bodyHtml = `
+        <div class="info">${t('cardName')}${item.name}</div>
+        <div class="info">${t('cardOrig')}${formatSize(item.originSize)}</div>
+        <div class="info" style="color:#9333ea">PDF · ${item.pages} 页</div>
+        <div style="height:200px;display:flex;align-items:center;justify-content:center;background:#f3e8ff;color:#9333ea;font-weight:700;border-radius:8px;margin:6px 0">PDF</div>
+        <div style="margin-top:8px">
+          <button class="dl-one" data-name="${item.name}">${t('dlOne')}</button>
+        </div>
+      `
     } else {
-      savedText = t('processing')
-      savedColor = '#444'
+      let savedText, savedColor
+      if(item.compressedBlob){
+        const pct = Math.round((1 - item.compressedBlob.size / item.originSize) * 100)
+        savedText = pct > 0 ? `${t('saved')} ${pct}%` : (pct < 0 ? `${t('increased')} ${-pct}%` : t('noChange'))
+        savedColor = pct > 0 ? '#10b981' : (pct < 0 ? '#ef4444' : '#444')
+      } else {
+        savedText = t('processing')
+        savedColor = '#444'
+      }
+      bodyHtml = `
+        <div class="info">${t('cardName')}${item.name}</div>
+        <div class="info">${t('cardOrig')}${formatSize(item.originSize)}</div>
+        <div class="info">${t('cardComp')}${item.compressedBlob ? formatSize(item.compressedBlob.size) : t('processing')}</div>
+        <div class="info" style="color:${savedColor}">${savedText}</div>
+        ${item.compressedUrl ? `<img src="${item.compressedUrl}" draggable="false" />` : `<div>${t('waiting')}</div>`}
+        <div style="margin-top:8px">
+          <button class="dl-one" data-name="${item.name}">${t('dlOne')}</button>
+        </div>
+      `
     }
-    card.innerHTML = `
-      <div class="info">${t('cardName')}${item.name}</div>
-      <div class="info">${t('cardOrig')}${formatSize(item.originSize)}</div>
-      <div class="info">${t('cardComp')}${item.compressedBlob ? formatSize(item.compressedBlob.size) : t('processing')}</div>
-      <div class="info" style="color:${savedColor}">${savedText}</div>
-      ${item.compressedUrl ? `<img src="${item.compressedUrl}" draggable="false" />` : `<div>${t('waiting')}</div>`}
-      <div style="margin-top:8px">
-        <button class="dl-one" data-name="${item.name}">${t('dlOne')}</button>
-      </div>
-    `
+    card.innerHTML = bodyHtml
     resultGrid.appendChild(card)
   })
   // 单张下载
@@ -276,7 +297,15 @@ function renderList(){
     btn.onclick = ()=>{
       const name = btn.dataset.name
       const t = taskList.find(x=>x.name===name)
-      if(!t || !t.compressedBlob) return
+      if(!t) return
+      if(t.type === 'pdf'){
+        const a = document.createElement('a')
+        a.href = t.pdfUrl || (t.pdfUrl = URL.createObjectURL(t.originFile))
+        a.download = t.name
+        a.click()
+        return
+      }
+      if(!t.compressedBlob) return
       const a = document.createElement('a')
       a.href = t.compressedUrl
       a.download = t('dlNamePrefix') + name.replace(/\.\w+$/, '.jpg')
@@ -288,8 +317,7 @@ function renderList(){
 
 function updateEstimate(){
   const est = document.getElementById('pdfEstimate')
-  // jsPDF 对 JPEG 基本原样嵌入，PDF 大小≈各压缩图之和 + 少量结构开销，故按图片总大小估算
-  const total = taskList.reduce((s,i)=>s + (i.compressedBlob ? i.compressedBlob.size : 0), 0)
+  const total = taskList.reduce((s,i)=> s + (i.compressedBlob ? i.compressedBlob.size : (i.type === 'pdf' ? i.originSize : 0)), 0)
   est.textContent = total > 0 ? t('estimate', formatSize(total)) : ''
 }
 
@@ -297,16 +325,16 @@ const i18n = {
   zh: {
     title:'图片压缩 · 打包ZIP · 合成PDF',
     h1:'图片批量压缩 · 打包ZIP · 合成PDF',
-    subtitle:'支持 JPG / PNG，扫描图铺满 A4 不变形',
-    dropTitle:'点击此处，或将多张图片拖拽到这里',
+    subtitle:'支持 JPG / PNG / PDF，扫描图铺满 A4 不变形',
+    dropTitle:'点击此处，或将多张图片 / PDF 拖拽到这里',
     qualityLabel:'压缩质量：',
     qualityHint:'数值越小体积越小，松手后自动重压缩',
     sortLabel:'排序方式：',
     sortHint:'自动排序将覆盖手动顺序',
     pdfModeLabel:'PDF 排版：',
-    pdfModeHint:'决定 PDF 中图片的排布方式',
+    pdfModeHint:'决定图片排布；导入的 PDF 直接合并',
     zipBtn:'打包下载 ZIP',
-    pdfBtn:'合成 PDF（铺满A4）',
+    pdfBtn:'合成/合并 PDF',
     clearBtn:'清空列表',
     dragHint:'拖拽卡片可手动排序，顺序将决定 ZIP 与 PDF 中的排列',
     cardName:'文件名：',
@@ -332,21 +360,21 @@ const i18n = {
     modeGrid:'一页多图拼版',
     dlNamePrefix:'压缩_',
     zipName:'compressed_images.zip',
-    pdfName:'压缩图片.pdf'
+    pdfName:'merged.pdf'
   },
   en: {
     title:'Image Compressor · ZIP · PDF',
     h1:'Batch Image Compress · ZIP · PDF',
-    subtitle:'Supports JPG / PNG, scans fit A4 without distortion',
-    dropTitle:'Click here, or drag & drop multiple images',
+    subtitle:'Supports JPG / PNG / PDF, scans fit A4 without distortion',
+    dropTitle:'Click here, or drag & drop multiple images / PDFs',
     qualityLabel:'Quality:',
     qualityHint:'Lower = smaller files; re-compresses on release',
     sortLabel:'Sort by:',
     sortHint:'Auto sort overrides manual order',
     pdfModeLabel:'PDF layout:',
-    pdfModeHint:'How images are arranged in the PDF',
+    pdfModeHint:'How images are arranged; imported PDFs are merged',
     zipBtn:'Download ZIP',
-    pdfBtn:'Build PDF (fit A4)',
+    pdfBtn:'Build / Merge PDF',
     clearBtn:'Clear list',
     dragHint:'Drag cards to reorder — order affects ZIP & PDF',
     cardName:'Name: ',
@@ -372,7 +400,7 @@ const i18n = {
     modeGrid:'Multi-image grid',
     dlNamePrefix:'compressed_',
     zipName:'compressed_images.zip',
-    pdfName:'compressed_images.pdf'
+    pdfName:'merged.pdf'
   }
 }
 let lang = localStorage.getItem('lang') || 'zh'
@@ -440,90 +468,122 @@ downloadZipBtn.onclick = async ()=>{
   downloadZipBtn.disabled = false
 }
 
-// 合成PDF下载：支持多种排版模式（由 pdfMode 决定）
+// 下载辅助
+function triggerDownload(blob, name){
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = name
+  a.click()
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000)
+}
+async function blobToImage(blob){
+  const d = await blobToDataURL(blob)
+  const r = await loadImage(d)
+  return r ? r.el : null
+}
+async function ensureCompressed(){
+  const q = parseFloat(qualityInput.value)
+  for(const item of taskList){
+    if(item.type === 'image' && !item.compressedBlob){
+      await compressOne(item, q)
+    }
+  }
+  renderList()
+}
+
+// 合成 / 合并 PDF：支持多种图片排版模式，并合并导入的 PDF 文件（按列表顺序）
 downloadPdfBtn.onclick = async ()=>{
   downloadPdfBtn.disabled = true
   downloadZipBtn.disabled = true
   downloadPdfBtn.textContent = t('generating')
-  try {
+  try{
+    await ensureCompressed()
     const mode = pdfMode.value
-    const PER_PAGE = 4 // 一页多图：2×2
+    const doc = await PDFLib.PDFDocument.create()
+    const A4P = [595.28, 841.89]
+    const A4L = [841.89, 595.28]
+    const PT = 72/25.4
+    let gridPage = null, gridCount = 0
 
-    // 预加载所有有效图片及其尺寸
-    const imgs = []
-    for(const item of taskList){
-      if(!item.compressedBlob) continue
-      const data = await blobToDataURL(item.compressedBlob)
-      const dim = await loadImage(data)
-      if(dim) imgs.push({base64:data, ...dim})
+    const fitDraw = (page, img, pw, ph)=>{
+      const ir = img.width / img.height
+      const pr = pw / ph
+      let dw, dh, dx, dy
+      if(ir >= pr){ dw=pw; dh=pw/ir; dx=0; dy=(ph-dh)/2 }
+      else { dh=ph; dw=ph*ir; dx=(pw-dw)/2; dy=0 }
+      page.drawImage(img, {x:dx, y:dy, width:dw, height:dh})
     }
-    if(imgs.length === 0) return
 
-    const pdf = new jsPDF({unit:'mm', format:'a4', orientation:'p'})
-
-    for(let i=0;i<imgs.length;i++){
-      const it = imgs[i]
-      const imgRatio = it.w / it.h
+    for(const item of taskList){
+      if(item.type === 'pdf'){
+        try{
+          const src = await PDFLib.PDFDocument.load(await item.originFile.arrayBuffer())
+          const copied = await doc.copyPages(src, src.getPageIndices())
+          for(const p of copied) doc.addPage(p)
+        }catch(e){}
+        continue
+      }
+      if(item.type !== 'image' || !item.compressedBlob) continue
+      const bytes = await item.compressedBlob.arrayBuffer()
+      const isPng = item.name.toLowerCase().endsWith('.png')
+      const img = isPng ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)
+      const iw = img.width, ih = img.height, ir = iw/ih
 
       if(mode === 'grid'){
-        if(i>0) pdf.addPage('a4','p')
-        const margin = 8, cols = 2, rows = 2
-        const cellW = (210 - 2*margin) / cols
-        const cellH = (297 - 2*margin) / rows
-        const idx = i % PER_PAGE
-        const cx = margin + (idx % cols) * cellW
-        const cy = margin + Math.floor(idx / cols) * cellH
-        const cellRatio = cellW / cellH
-        let dw, dh, dx, dy
-        if(imgRatio >= cellRatio){ dw=cellW; dh=cellW/imgRatio; dx=cx; dy=cy+(cellH-dh)/2 }
-        else { dh=cellH; dw=cellH*imgRatio; dx=cx+(cellW-dw)/2; dy=cy }
-        pdf.addImage(it.base64,'JPEG',dx,dy,dw,dh)
+        const perPage = 4
+        if(gridCount % perPage === 0){
+          gridPage = doc.addPage(A4P)
+          gridCount = 0
+        }
+        const margin = 8*PT, cols=2, rows=2
+        const cellW = (A4P[0]-2*margin)/cols
+        const cellH = (A4P[1]-2*margin)/rows
+        const cx = margin + (gridCount % cols)*cellW
+        const cy = margin + Math.floor(gridCount/cols)*cellH
+        const cr = cellW/cellH
+        let dw,dh,dx,dy
+        if(ir>=cr){ dw=cellW; dh=cellW/ir; dx=cx; dy=cy+(cellH-dh)/2 }
+        else { dh=cellH; dw=cellH*ir; dx=cx+(cellW-dw)/2; dy=cy }
+        gridPage.drawImage(img, {x:dx, y:dy, width:dw, height:dh})
+        gridCount++
         continue
       }
 
       if(mode === 'ratio'){
-        const w = 210
-        const h = Math.max(1, 210 * (it.h / it.w))
-        pdf.addPage([w, h])
-        pdf.addImage(it.base64,'JPEG',0,0,w,h)
+        const w = A4P[0]
+        const h = Math.max(1, w * (ih/iw))
+        const page = doc.addPage([w, h])
+        page.drawImage(img, {x:0, y:0, width:w, height:h})
         continue
       }
 
-      // fit / auto / cover：基于 A4，auto/cover 可横竖自适应
-      const landscape = (mode === 'auto' || mode === 'cover') && it.w >= it.h
-      const pw = landscape ? 297 : 210
-      const ph = landscape ? 210 : 297
-      if(i === 0){
-        if(landscape) pdf.setPageOrientation('l')
-      } else {
-        pdf.addPage('a4', landscape ? 'l' : 'p')
-      }
+      const landscape = (mode === 'auto' || mode === 'cover') && iw >= ih
+      const [pw, ph] = landscape ? A4L : A4P
+      const page = doc.addPage([pw, ph])
 
       if(mode === 'cover'){
-        // 裁切填满整页（不变形，超出部分裁掉）
-        const px = 3.7795 // 约 96dpi
-        const c = document.createElement('canvas')
-        c.width = Math.round(pw * px)
-        c.height = Math.round(ph * px)
-        const ctx = c.getContext('2d')
-        const pageRatio = pw / ph
-        let sx, sy, sw, sh
-        if(imgRatio > pageRatio){ sh=it.h; sw=it.h*pageRatio; sx=(it.w-sw)/2; sy=0 }
-        else { sw=it.w; sh=it.w/pageRatio; sx=0; sy=(it.h-sh)/2 }
-        ctx.drawImage(it.el, sx, sy, sw, sh, 0, 0, c.width, c.height)
-        pdf.addImage(c.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pw, ph)
-      } else {
-        // fit：等比居中（contain），不变形、留白
-        const pageRatio = pw / ph
-        let dw, dh, dx, dy
-        if(imgRatio >= pageRatio){ dw=pw; dh=pw/imgRatio; dx=0; dy=(ph-dh)/2 }
-        else { dh=ph; dw=ph*imgRatio; dx=(pw-dw)/2; dy=0 }
-        pdf.addImage(it.base64,'JPEG',dx,dy,dw,dh)
+        const srcImg = await blobToImage(item.compressedBlob)
+        if(srcImg){
+          const c = document.createElement('canvas')
+          c.width = Math.round(pw*PT*2)
+          c.height = Math.round(ph*PT*2)
+          const ctx = c.getContext('2d')
+          const pr = pw/ph
+          let sx,sy,sw,sh
+          if(ir > pr){ sh=ih; sw=ih*pr; sx=(iw-sw)/2; sy=0 }
+          else { sw=iw; sh=iw/pr; sx=0; sy=(ih-sh)/2 }
+          ctx.drawImage(srcImg, sx,sy,sw,sh, 0,0,c.width,c.height)
+          const pngBytes = await new Promise(r=>c.toBlob(r,'image/jpeg',0.92))
+          const cimg = await doc.embedJpg(await pngBytes.arrayBuffer())
+          page.drawImage(cimg, {x:0, y:0, width:pw, height:ph})
+          continue
+        }
       }
+      fitDraw(page, img, pw, ph)
     }
 
-    if(mode === 'ratio') pdf.deletePage(1) // 删除初始空白页
-    pdf.save(t('pdfName'))
+    const out = await doc.save()
+    triggerDownload(new Blob([out], {type:'application/pdf'}), t('pdfName'))
   } finally {
     downloadPdfBtn.disabled = false
     downloadZipBtn.disabled = false
