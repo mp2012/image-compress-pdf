@@ -18,6 +18,7 @@ input[type=file]{display:none}
 .ctrl{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 label{white-space:nowrap;font-weight:600;color:#334155}
 input[type=range]{width:240px;accent-color:var(--blue)}
+input[type=range]:disabled{opacity:.4;cursor:not-allowed}
 .quality-info{min-width:48px;font-weight:700;color:var(--blue)}
 .hint{color:#94a3b8;font-size:13px}
 select{padding:7px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;background:#fff;color:#334155;cursor:pointer}
@@ -67,6 +68,15 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
     <input type="range" id="quality" min="0.1" max="0.95" step="0.05" value="0.7">
     <span class="quality-info" id="qualityVal">0.7</span>
     <span class="hint" data-i18n="qualityHint">数值越小体积越小，松手后自动重压缩</span>
+  </div>
+  <div class="ctrl" style="margin-top:12px">
+    <label style="cursor:pointer"><input type="checkbox" id="targetOn"> <span data-i18n="targetOn">限制单张体积</span></label>
+    <span><span data-i18n="targetMax">不超过</span> <input id="targetVal" type="number" min="1" value="200" style="width:80px"></span>
+    <select id="targetUnit">
+      <option value="KB">KB</option>
+      <option value="MB">MB</option>
+    </select>
+    <span class="hint" data-i18n="targetHint">自动调整质量（必要时缩小尺寸），使每张不超过此值；开启后质量滑块不生效</span>
   </div>
   <div class="ctrl" style="margin-top:12px">
     <label data-i18n="sizeLabel">目标尺寸：</label>
@@ -137,6 +147,9 @@ const sizeW = document.getElementById('sizeW')
 const sizeH = document.getElementById('sizeH')
 const sizeLongWrap = document.getElementById('sizeLongWrap')
 const sizeFixedWrap = document.getElementById('sizeFixedWrap')
+const targetOn = document.getElementById('targetOn')
+const targetVal = document.getElementById('targetVal')
+const targetUnit = document.getElementById('targetUnit')
 
 let taskList = [] // {name, originFile, compressedBlob, compressedUrl, originSize}
 let dragIndex = null // 拖拽排序时的源索引
@@ -158,6 +171,20 @@ sizeLong.onchange = ()=>reCompressAll()
 sizeW.onchange = ()=>reCompressAll()
 sizeH.onchange = ()=>reCompressAll()
 syncSizeInputs()
+
+// 目标体积：开启后按体积自动找质量，质量滑块失效
+function targetBytes(){
+  const v = parseFloat(targetVal.value) || 0
+  return Math.round(v * (targetUnit.value === 'MB' ? 1024 * 1024 : 1024))
+}
+function syncTargetInputs(){
+  qualityInput.disabled = targetOn.checked
+}
+targetOn.onchange = ()=>{ syncTargetInputs(); reCompressAll() }
+targetVal.onchange = ()=>{ if(targetOn.checked) reCompressAll() }
+targetUnit.onchange = ()=>{ if(targetOn.checked) reCompressAll() }
+syncTargetInputs()
+
 dropBox.onclick = ()=>fileInput.click()
 
 // 拖拽上传
@@ -253,6 +280,49 @@ function computeTarget(w, h){
   return [w, h]
 }
 
+function canvasToJpeg(canvas, quality){
+  return new Promise(resolve=>canvas.toBlob(resolve, 'image/jpeg', quality))
+}
+
+// 把画布压到不超过 maxBytes：
+// 1) 先用最高质量试一次；2) 不行就在 [0.1, 0.95] 内二分查找质量；
+// 3) 最低质量仍超标时（且允许缩小），逐步缩小尺寸后重试。
+// 返回 {blob, canvas, ok}，ok=false 表示已到下限仍未达标。
+async function fitToSize(srcCanvas, maxBytes, allowShrink){
+  const MIN_Q = 0.1, MAX_Q = 0.95
+  let canvas = srcCanvas
+  let scale = 1
+  for(let attempt = 0; attempt < 16; attempt++){
+    const hi = await canvasToJpeg(canvas, MAX_Q)
+    if(hi.size <= maxBytes) return { blob: hi, canvas, ok: true }
+    const lo = await canvasToJpeg(canvas, MIN_Q)
+    if(lo.size <= maxBytes){
+      let loQ = MIN_Q, hiQ = MAX_Q, best = lo
+      for(let i = 0; i < 7; i++){
+        const mid = (loQ + hiQ) / 2
+        const b = await canvasToJpeg(canvas, mid)
+        if(b.size <= maxBytes){ best = b; loQ = mid } else { hiQ = mid }
+      }
+      return { blob: best, canvas, ok: true }
+    }
+    if(!allowShrink) return { blob: lo, canvas, ok: false }
+    scale *= 0.85
+    const w = Math.max(1, Math.round(srcCanvas.width * scale))
+    const h = Math.max(1, Math.round(srcCanvas.height * scale))
+    if(Math.max(w, h) < 200) return { blob: lo, canvas, ok: false }
+    const c = document.createElement('canvas')
+    c.width = w
+    c.height = h
+    const cctx = c.getContext('2d')
+    cctx.fillStyle = '#fff'
+    cctx.fillRect(0, 0, w, h)
+    cctx.drawImage(srcCanvas, 0, 0, w, h)
+    canvas = c
+  }
+  const last = await canvasToJpeg(canvas, MIN_Q)
+  return { blob: last, canvas, ok: last.size <= maxBytes }
+}
+
 function compressOne(task, quality){
   return new Promise(resolve=>{
     const reader = new FileReader()
@@ -260,29 +330,44 @@ function compressOne(task, quality){
     reader.onload = e=>{
       const img = new Image()
       img.onerror = ()=>resolve()        // 解码失败，跳过该图
-      img.onload = ()=>{
-        const [tw, th] = computeTarget(img.width, img.height)
-        const canvas = document.createElement('canvas')
-        canvas.width = tw
-        canvas.height = th
-        const ctx = canvas.getContext('2d')
-        ctx.fillStyle = '#fff'           // 处理 PNG 透明背景，避免变黑
-        ctx.fillRect(0, 0, tw, th)
-        let dx = 0, dy = 0, dw = tw, dh = th
-        if(sizeMode.value === 'fixed'){  // 等比 contain 居中，保持比例不变形
-          const ir = img.width / img.height, tr = tw / th
-          if(ir > tr){ dw = tw; dh = tw / ir; dy = (th - dh) / 2 }
-          else { dh = th; dw = th * ir; dx = (tw - dw) / 2 }
-        }
-        ctx.drawImage(img, dx, dy, dw, dh)
-        task.outW = tw
-        task.outH = th
-        canvas.toBlob(blob=>{
+      img.onload = async ()=>{
+        try{
+          const [tw, th] = computeTarget(img.width, img.height)
+          const canvas = document.createElement('canvas')
+          canvas.width = tw
+          canvas.height = th
+          const ctx = canvas.getContext('2d')
+          ctx.fillStyle = '#fff'           // 处理 PNG 透明背景，避免变黑
+          ctx.fillRect(0, 0, tw, th)
+          let dx = 0, dy = 0, dw = tw, dh = th
+          if(sizeMode.value === 'fixed'){  // 等比 contain 居中，保持比例不变形
+            const ir = img.width / img.height, tr = tw / th
+            if(ir > tr){ dw = tw; dh = tw / ir; dy = (th - dh) / 2 }
+            else { dh = th; dw = th * ir; dx = (tw - dw) / 2 }
+          }
+          ctx.drawImage(img, dx, dy, dw, dh)
+
+          let blob, outCanvas = canvas
+          task.sizeFailed = false
+          const limit = targetBytes()
+          if(targetOn.checked && limit > 0){
+            // 固定宽高模式下不改尺寸，只调质量
+            const r = await fitToSize(canvas, limit, sizeMode.value !== 'fixed')
+            blob = r.blob
+            outCanvas = r.canvas
+            task.sizeFailed = !r.ok
+          } else {
+            blob = await canvasToJpeg(canvas, quality)
+          }
+          task.outW = outCanvas.width
+          task.outH = outCanvas.height
           if(task.compressedUrl) URL.revokeObjectURL(task.compressedUrl) // 释放旧 URL
           task.compressedBlob = blob
           task.compressedUrl = URL.createObjectURL(blob)
-          resolve()
-        }, 'image/jpeg', quality)
+        }catch(err){
+          console.error(err)
+        }
+        resolve()
       }
       img.src = e.target.result
     }
@@ -348,6 +433,7 @@ function renderList(){
         <div class="info">${t('cardComp')}${item.compressedBlob ? formatSize(item.compressedBlob.size) : t('processing')}</div>
         <div class="info">${t('cardOut')}${item.compressedBlob && item.outW ? `${item.outW}×${item.outH} px` : t('processing')}</div>
         <div class="info" style="color:${savedColor}">${savedText}</div>
+        ${item.sizeFailed ? `<div class="info" style="color:#ef4444">${t('sizeFailed')}</div>` : ''}
         ${item.compressedUrl ? `<img src="${item.compressedUrl}" draggable="false" />` : `<div>${t('waiting')}</div>`}
         <div style="margin-top:8px">
           <button class="dl-one" data-name="${item.name}">${t('dlOne')}</button>
@@ -363,22 +449,22 @@ function renderList(){
     card.appendChild(rmBtn)
     resultGrid.appendChild(card)
   })
-  // 单张下载
+  // 单张下载（注意：局部变量不要叫 t，否则会遮住全局翻译函数 t()）
   document.querySelectorAll('.dl-one').forEach(btn=>{
     btn.onclick = ()=>{
       const name = btn.dataset.name
-      const t = taskList.find(x=>x.name===name)
-      if(!t) return
-      if(t.type === 'pdf'){
+      const it = taskList.find(x=>x.name===name)
+      if(!it) return
+      if(it.type === 'pdf'){
         const a = document.createElement('a')
-        a.href = t.pdfUrl || (t.pdfUrl = URL.createObjectURL(t.originFile))
-        a.download = t.name
+        a.href = it.pdfUrl || (it.pdfUrl = URL.createObjectURL(it.originFile))
+        a.download = it.name
         a.click()
         return
       }
-      if(!t.compressedBlob) return
+      if(!it.compressedBlob) return
       const a = document.createElement('a')
-      a.href = t.compressedUrl
+      a.href = it.compressedUrl
       a.download = t('dlNamePrefix') + name.replace(/\.\w+$/, '.jpg')
       a.click()
     }
@@ -459,7 +545,11 @@ const i18n = {
     sizeHint:'把图片统一到目标尺寸后再压缩',
     longEdge:'长边',
     times:'×',
-    cardOut:'输出尺寸：'
+    cardOut:'输出尺寸：',
+    targetOn:'限制单张体积',
+    targetMax:'不超过',
+    targetHint:'自动调整质量（必要时缩小尺寸），使每张不超过此值；开启后质量滑块不生效。选“固定宽高”时只调质量，不改尺寸',
+    sizeFailed:'已到最低质量/尺寸，仍超过目标体积'
   },
   en: {
     title:'Image Compressor · ZIP · PDF',
@@ -509,7 +599,11 @@ const i18n = {
     sizeHint:'Resize to target, then compress',
     longEdge:'Long edge',
     times:'×',
-    cardOut:'Output: '
+    cardOut:'Output: ',
+    targetOn:'Limit file size',
+    targetMax:'Max',
+    targetHint:'Auto-tunes quality (and shrinks if needed) so each image stays under this size; the quality slider is ignored. With "Fixed W×H" only quality is tuned.',
+    sizeFailed:'Hit minimum quality/size but still over the limit'
   }
 }
 let lang = localStorage.getItem('lang') || 'zh'
