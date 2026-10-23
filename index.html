@@ -30,7 +30,9 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 .clear-btn{background:var(--red);box-shadow:0 2px 6px rgba(239,68,68,.25)}
 .pdf-btn{background:var(--purple);box-shadow:0 2px 6px rgba(147,51,234,.25)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin:20px 0}
-.card{border:1px solid #e2e8f0;border-radius:12px;padding:14px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04);transition:.15s;cursor:grab}
+.card{position:relative;border:1px solid #e2e8f0;border-radius:12px;padding:14px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04);transition:.15s;cursor:grab}
+.rm-btn{position:absolute;top:6px;right:6px;width:24px;height:24px;border:none;border-radius:50%;background:#ef4444;color:#fff;font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:.85}
+.rm-btn:hover{opacity:1;transform:scale(1.1)}
 .card:active{cursor:grabbing}
 .card:hover{box-shadow:0 4px 14px rgba(0,0,0,.08)}
 .card img{width:100%;height:200px;object-fit:contain;background:#f8fafc;border-radius:8px;margin:6px 0}
@@ -353,6 +355,12 @@ function renderList(){
       `
     }
     card.innerHTML = bodyHtml
+    const rmBtn = document.createElement('button')
+    rmBtn.className = 'rm-btn'
+    rmBtn.textContent = '×'
+    rmBtn.title = '移除'
+    rmBtn.dataset.idx = i
+    card.appendChild(rmBtn)
     resultGrid.appendChild(card)
   })
   // 单张下载
@@ -373,6 +381,24 @@ function renderList(){
       a.href = t.compressedUrl
       a.download = t('dlNamePrefix') + name.replace(/\.\w+$/, '.jpg')
       a.click()
+    }
+  })
+  // 移除单张
+  document.querySelectorAll('.rm-btn').forEach(btn=>{
+    btn.onclick = ()=>{
+      const idx = parseInt(btn.dataset.idx)
+      const it = taskList[idx]
+      if(!it) return
+      if(it.compressedUrl) URL.revokeObjectURL(it.compressedUrl)
+      if(it.pdfUrl) URL.revokeObjectURL(it.pdfUrl)
+      taskList.splice(idx, 1)
+      renderList()
+      const hasImage = taskList.some(x=>x.type==='image')
+      const hasAny = taskList.length > 0
+      const hasPdf = taskList.some(x=>x.type==='pdf')
+      downloadZipBtn.disabled = !hasImage
+      downloadPdfBtn.disabled = !hasAny
+      pdfToJpgBtn.disabled = !hasPdf
     }
   })
   updateEstimate()
