@@ -44,6 +44,23 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 .footer a:hover{color:#2563eb;text-decoration:underline}
 .lang-btn{position:fixed;top:16px;right:16px;background:#fff;color:#334155;border:1px solid #cbd5e1;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.08);z-index:10}
 .lang-btn:hover{border-color:var(--blue);color:var(--blue)}
+.progress{display:none;margin:10px 0;height:8px;background:#e2e8f0;border-radius:6px;overflow:hidden}
+.progress > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--blue),var(--purple));transition:width .2s}
+.progress-text{display:none;margin:4px 0 0;font-size:13px;text-align:center}
+.card.failed{border-color:var(--red);background:#fef2f2}
+.card .fail-note{color:var(--red);font-weight:600;margin:3px 0}
+.section-sep{margin:18px 0 6px;font-weight:700;color:#334155}
+.section-sep small{font-weight:400;color:#94a3b8;margin-left:6px}
+.move-btns{display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle}
+.move-btns button{padding:2px 8px;font-size:12px;background:#e2e8f0;color:#334155;box-shadow:none}
+.override-panel{margin-top:8px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:13px}
+.override-panel .ctrl{margin-top:6px}
+.custom-btn{padding:3px 10px;font-size:12px;background:#e2e8f0;color:#334155;box-shadow:none}
+@media (max-width:600px){
+  .ctrl{flex-direction:column;align-items:flex-start;gap:6px}
+  .btns button{flex:1 1 auto}
+  input[type=range]{width:100%}
+}
 </style>
 <!-- 依赖库已本地化到 ./libs，无需联网（双击 file:// 也能用） -->
 <!-- JSZip 用于打包ZIP -->
@@ -62,6 +79,10 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
   <div style="font-size:32px;margin-bottom:8px">＋</div>
   <p data-i18n="dropTitle">点击此处，或将多张图片拖拽到这里</p>
   <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png,application/pdf,.pdf" multiple>
+</div>
+<div style="text-align:center;margin:-12px 0 18px">
+  <button id="folderBtn" type="button" style="background:#fff;color:#334155;border:1px solid #cbd5e1;box-shadow:none;font-weight:600" data-i18n="folderBtn">选择文件夹批量导入</button>
+  <input type="file" id="folderInput" webkitdirectory directory multiple accept="image/*,application/pdf" style="display:none">
 </div>
 <div class="panel">
   <div class="ctrl">
@@ -110,6 +131,11 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
     </select>
     <span class="hint" data-i18n="pdfModeHint">决定 PDF 中图片的排布方式</span>
   </div>
+  <div class="ctrl" style="margin-top:12px">
+    <label data-i18n="outPrefixLabel">输出前缀：</label>
+    <input id="outPrefix" type="text" value="compressed_" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;width:160px">
+    <span class="hint" data-i18n="outPrefixHint">单张下载与 ZIP 内文件名前缀</span>
+  </div>
 </div>
 <div class="btns">
   <button id="downloadZipBtn" data-i18n="zipBtn" disabled>打包下载 ZIP</button>
@@ -117,6 +143,9 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
   <button id="pdfToJpgBtn" data-i18n="pdfToJpgBtn" disabled>PDF 转 JPG（ZIP）</button>
   <button class="clear-btn" id="clearBtn" data-i18n="clearBtn">清空列表</button>
 </div>
+<div class="progress" id="progressBar"><i></i></div>
+<div class="progress-text" id="progressText"></div>
+<p class="hint" style="text-align:center;margin:4px 0 8px"><span data-i18n="splitNote">图片会被压缩并进入 ZIP / PDF；导入的 PDF 不参与压缩，仅用于合并或转 JPG</span></p>
 <div id="pdfEstimate" class="estimate"></div>
 <p class="hint" style="text-align:center;margin:4px 0 12px" data-i18n="dragHint">拖拽卡片可手动排序，顺序将决定 ZIP 与 PDF 中的排列</p>
 <div class="grid" id="resultGrid"></div>
@@ -157,6 +186,12 @@ const sizeFixedWrap = document.getElementById('sizeFixedWrap')
 const targetOn = document.getElementById('targetOn')
 const targetVal = document.getElementById('targetVal')
 const targetUnit = document.getElementById('targetUnit')
+const progressBar = document.getElementById('progressBar')
+const progressText = document.getElementById('progressText')
+const progressFill = progressBar ? progressBar.querySelector('i') : null
+const outPrefix = document.getElementById('outPrefix')
+const folderBtn = document.getElementById('folderBtn')
+const folderInput = document.getElementById('folderInput')
 
 let taskList = [] // {name, originFile, compressedBlob, compressedUrl, originSize}
 let dragIndex = null // 拖拽排序时的源索引
@@ -179,11 +214,6 @@ sizeW.onchange = ()=>reCompressAll()
 sizeH.onchange = ()=>reCompressAll()
 syncSizeInputs()
 
-// 目标体积：开启后按体积自动找质量，质量滑块失效
-function targetBytes(){
-  const v = parseFloat(targetVal.value) || 0
-  return Math.round(v * (targetUnit.value === 'MB' ? 1024 * 1024 : 1024))
-}
 function syncTargetInputs(){
   qualityInput.disabled = targetOn.checked
 }
@@ -193,15 +223,26 @@ targetUnit.onchange = ()=>{ if(targetOn.checked) reCompressAll() }
 syncTargetInputs()
 
 dropBox.onclick = ()=>fileInput.click()
+folderBtn.onclick = ()=>folderInput.click()
+folderInput.onchange = ()=>{ const f = Array.from(folderInput.files); folderInput.value=''; if(f.length) handleFiles(f) }
 
 // 拖拽上传
 dropBox.ondragover = e=>{e.preventDefault();dropBox.classList.add('drag')}
 dropBox.ondragleave = ()=>dropBox.classList.remove('drag')
-dropBox.ondrop = e=>{
+dropBox.ondrop = async e=>{
   e.preventDefault()
   dropBox.classList.remove('drag')
-  const files = Array.from(e.dataTransfer.files)
-  handleFiles(files)
+  let files = []
+  const items = e.dataTransfer.items
+  if(items && items.length && items[0].webkitGetAsEntry){
+    for(const it of items){
+      const en = it.webkitGetAsEntry && it.webkitGetAsEntry()
+      if(en) await traverse(en, files)
+    }
+  } else {
+    files = Array.from(e.dataTransfer.files)
+  }
+  if(files.length) handleFiles(files)
 }
 fileInput.onchange = ()=>{
   const files = Array.from(fileInput.files)
@@ -210,6 +251,7 @@ fileInput.onchange = ()=>{
 }
 
 clearBtn.onclick = ()=>{
+  if(taskList.length && !confirm(t('confirmClear'))) return
   for(const item of taskList){
     if(item.compressedUrl) URL.revokeObjectURL(item.compressedUrl)
     if(item.pdfUrl) URL.revokeObjectURL(item.pdfUrl)
@@ -258,12 +300,88 @@ async function handleFiles(files){
 }
 
 async function reCompressAll(){
-  const q = parseFloat(qualityInput.value)
-  for(const item of taskList){
-    if(item.type === 'pdf') continue
-    await compressOne(item, q)
+  const imgs = taskList.filter(i=>i.type === 'image')
+  const total = imgs.length
+  if(total === 0){ afterCompress(); return }
+  let done = 0
+  showProgress()
+  updateProgress(0, total)
+  // 并发处理（限流），避免大批量时界面长时间冻结
+  const CONC = 4
+  let cursor = 0
+  async function worker(){
+    while(cursor < imgs.length){
+      const item = imgs[cursor++]
+      const st = getEffectiveSettings(item)
+      await compressOne(item, st)
+      done++
+      updateProgress(done, total)
+    }
+  }
+  const ws = []
+  for(let i=0; i<Math.min(CONC, total); i++) ws.push(worker())
+  await Promise.all(ws)
+  const failed = taskList.filter(i=>i.type==='image' && i.failed).length
+  if(failed > 0){
+    if(progressBar) progressBar.style.display='none'
+    if(progressText){ progressText.style.display='block'; progressText.style.color='#ef4444'; progressText.textContent = t('failedNote', failed) }
+  } else {
+    hideProgress()
   }
   renderList()
+  afterCompress()
+}
+
+// 取某张图实际使用的设置：有单卡覆盖则用覆盖，否则用全局控件
+function getEffectiveSettings(item){
+  const ov = item.override
+  return {
+    quality: ov ? ov.quality : parseFloat(qualityInput.value),
+    sizeMode: ov ? ov.sizeMode : sizeMode.value,
+    sizeLong: ov ? ov.sizeLong : sizeLong.value,
+    sizeW: ov ? ov.sizeW : sizeW.value,
+    sizeH: ov ? ov.sizeH : sizeH.value,
+    targetOn: ov ? ov.targetOn : targetOn.checked,
+    targetVal: ov ? ov.targetVal : targetVal.value,
+    targetUnit: ov ? ov.targetUnit : targetUnit.value
+  }
+}
+
+// 根据目标尺寸设置计算输出宽高；fixed 模式返回画布尺寸（绘制时等比留白）。st 为设置对象
+function computeTarget(w, h, st){
+  const m = st.sizeMode
+  if(m === 'long'){
+    const L = parseInt(st.sizeLong) || 0
+    if(L > 0){
+      return w >= h ? [L, Math.round(h * L / w)] : [Math.round(w * L / h), L]
+    }
+  } else if(m === 'fixed'){
+    const W = parseInt(st.sizeW) || 0, H = parseInt(st.sizeH) || 0
+    if(W > 0 && H > 0) return [W, H]
+  }
+  return [w, h]
+}
+
+// 从设置对象计算目标字节数
+function targetBytesFrom(st){
+  const v = parseFloat(st.targetVal) || 0
+  return Math.round(v * (st.targetUnit === 'MB' ? 1024 * 1024 : 1024))
+}
+
+// 进度条控制
+function showProgress(){ if(progressBar) progressBar.style.display='block'; if(progressText) progressText.style.display='block' }
+function updateProgress(done, total){
+  const pct = total ? Math.round(done/total*100) : 0
+  if(progressFill) progressFill.style.width = pct + '%'
+  if(progressText) progressText.textContent = `${t('processing')} ${done}/${total}`
+}
+function hideProgress(){
+  if(progressFill) progressFill.style.width = '0%'
+  if(progressBar) progressBar.style.display='none'
+  if(progressText){ progressText.style.display='none'; progressText.style.color=''; progressText.textContent='' }
+}
+// 压缩结束后刷新按钮可用状态
+function afterCompress(){
   const hasImage = taskList.some(i=>i.type === 'image')
   const hasAny = taskList.length > 0
   const hasPdf = taskList.some(i=>i.type === 'pdf')
@@ -272,19 +390,23 @@ async function reCompressAll(){
   pdfToJpgBtn.disabled = !hasPdf
 }
 
-// 根据目标尺寸设置计算输出宽高；fixed 模式返回画布尺寸（绘制时等比留白）
-function computeTarget(w, h){
-  const m = sizeMode.value
-  if(m === 'long'){
-    const L = parseInt(sizeLong.value) || 0
-    if(L > 0){
-      return w >= h ? [L, Math.round(h * L / w)] : [Math.round(w * L / h), L]
-    }
-  } else if(m === 'fixed'){
-    const W = parseInt(sizeW.value) || 0, H = parseInt(sizeH.value) || 0
-    if(W > 0 && H > 0) return [W, H]
+// 递归读取拖入的文件夹
+function readAllEntries(reader){
+  return new Promise(resolve=>{
+    const out = []
+    const read = ()=> reader.readEntries(es=>{ if(!es || es.length === 0) resolve(out); else { out.push(...es); read() } })
+    read()
+  })
+}
+async function traverse(entry, out){
+  if(entry.isFile){
+    const f = await new Promise(r=>entry.file(r))
+    if(f) out.push(f)
+  } else if(entry.isDirectory){
+    const r = entry.createReader()
+    const es = await readAllEntries(r)
+    for(const e of es) await traverse(e, out)
   }
-  return [w, h]
 }
 
 function canvasToJpeg(canvas, quality){
@@ -330,16 +452,18 @@ async function fitToSize(srcCanvas, maxBytes, allowShrink){
   return { blob: last, canvas, ok: last.size <= maxBytes }
 }
 
-function compressOne(task, quality){
+function compressOne(task, st){
   return new Promise(resolve=>{
     const reader = new FileReader()
-    reader.onerror = ()=>resolve()       // 读取失败，跳过该图，避免卡死
+    task.failed = false
+    task.sizeFailed = false
+    reader.onerror = ()=>{ task.failed = true; resolve() }       // 读取失败，标记后跳过
     reader.onload = e=>{
       const img = new Image()
-      img.onerror = ()=>resolve()        // 解码失败，跳过该图
+      img.onerror = ()=>{ task.failed = true; resolve() }        // 解码失败，标记后跳过
       img.onload = async ()=>{
         try{
-          const [tw, th] = computeTarget(img.width, img.height)
+          const [tw, th] = computeTarget(img.width, img.height, st)
           const canvas = document.createElement('canvas')
           canvas.width = tw
           canvas.height = th
@@ -347,7 +471,7 @@ function compressOne(task, quality){
           ctx.fillStyle = '#fff'           // 处理 PNG 透明背景，避免变黑
           ctx.fillRect(0, 0, tw, th)
           let dx = 0, dy = 0, dw = tw, dh = th
-          if(sizeMode.value === 'fixed'){  // 等比 contain 居中，保持比例不变形
+          if(st.sizeMode === 'fixed'){  // 等比 contain 居中，保持比例不变形
             const ir = img.width / img.height, tr = tw / th
             if(ir > tr){ dw = tw; dh = tw / ir; dy = (th - dh) / 2 }
             else { dh = th; dw = th * ir; dx = (tw - dw) / 2 }
@@ -355,16 +479,15 @@ function compressOne(task, quality){
           ctx.drawImage(img, dx, dy, dw, dh)
 
           let blob, outCanvas = canvas
-          task.sizeFailed = false
-          const limit = targetBytes()
-          if(targetOn.checked && limit > 0){
+          const limit = targetBytesFrom(st)
+          if(st.targetOn && limit > 0){
             // 固定宽高模式下不改尺寸，只调质量
-            const r = await fitToSize(canvas, limit, sizeMode.value !== 'fixed')
+            const r = await fitToSize(canvas, limit, st.sizeMode !== 'fixed')
             blob = r.blob
             outCanvas = r.canvas
             task.sizeFailed = !r.ok
           } else {
-            blob = await canvasToJpeg(canvas, quality)
+            blob = await canvasToJpeg(canvas, st.quality)
           }
           task.outW = outCanvas.width
           task.outH = outCanvas.height
@@ -372,6 +495,7 @@ function compressOne(task, quality){
           task.compressedBlob = blob
           task.compressedUrl = URL.createObjectURL(blob)
         }catch(err){
+          task.failed = true
           console.error(err)
         }
         resolve()
@@ -384,35 +508,33 @@ function compressOne(task, quality){
 
 function renderList(){
   resultGrid.innerHTML = ''
-  taskList.forEach((item, i)=>{
+  const images = taskList.filter(i=>i.type === 'image')
+  const pdfs = taskList.filter(i=>i.type === 'pdf')
+
+  const addSep = (html)=>{ const s=document.createElement('div'); s.className='section-sep'; s.innerHTML=html; resultGrid.appendChild(s) }
+
+  const renderOne = (item)=>{
+    const idx = taskList.indexOf(item)
     const card = document.createElement('div')
-    card.className = 'card'
+    card.className = 'card' + (item.failed ? ' failed' : '')
     card.draggable = true
-    card.dataset.idx = i
-    card.ondragstart = e=>{
-      dragIndex = i
-      e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setData('text/plain', String(i))
-    }
-    card.ondragover = e=>{
-      e.preventDefault()
-      e.dataTransfer.dropEffect = 'move'
-      card.style.outline = '2px dashed #2563eb'
-    }
-    card.ondragleave = ()=>{ card.style.outline = '' }
+    card.dataset.idx = idx
+    card.ondragstart = e=>{ dragIndex = idx; e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(idx)) }
+    card.ondragover = e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; card.style.outline='2px dashed #2563eb' }
+    card.ondragleave = ()=>{ card.style.outline='' }
     card.ondrop = e=>{
-      e.preventDefault()
-      card.style.outline = ''
-      const targetIdx = i
+      e.preventDefault(); card.style.outline=''
+      const targetIdx = idx
       if(dragIndex === null || dragIndex === targetIdx) return
       const moved = taskList.splice(dragIndex, 1)[0]
       const insertAt = dragIndex < targetIdx ? targetIdx - 1 : targetIdx
       taskList.splice(insertAt, 0, moved)
       dragIndex = null
-      sortBy.value = 'manual'  // 手动拖拽后如实反映为手动
+      sortBy.value = 'manual'
       renderList()
     }
-    card.ondragend = ()=>{ dragIndex = null; card.style.outline = '' }
+    card.ondragend = ()=>{ dragIndex = null; card.style.outline='' }
+
     let bodyHtml
     if(item.type === 'pdf'){
       bodyHtml = `
@@ -420,30 +542,47 @@ function renderList(){
         <div class="info">${t('cardOrig')}${formatSize(item.originSize)}</div>
         <div class="info" style="color:#9333ea">PDF · ${item.pages} 页</div>
         <div style="height:200px;display:flex;align-items:center;justify-content:center;background:#f3e8ff;color:#9333ea;font-weight:700;border-radius:8px;margin:6px 0">PDF</div>
-        <div style="margin-top:8px">
-          <button class="dl-one" data-name="${item.name}">${t('dlOne')}</button>
-        </div>
+        <div class="move-btns"><button data-move="up" title="${t('moveUp')}">↑</button><button data-move="down" title="${t('moveDown')}">↓</button></div>
+        <div style="margin-top:8px"><button class="dl-one" data-name="${item.name}">${t('dlOne')}</button></div>
       `
     } else {
+      const eff = getEffectiveSettings(item)
       let savedText, savedColor
-      if(item.compressedBlob){
+      if(item.failed){
+        savedText = t('failedShort'); savedColor = '#ef4444'
+      } else if(item.compressedBlob){
         const pct = Math.round((1 - item.compressedBlob.size / item.originSize) * 100)
         savedText = pct > 0 ? `${t('saved')} ${pct}%` : (pct < 0 ? `${t('increased')} ${-pct}%` : t('noChange'))
         savedColor = pct > 0 ? '#10b981' : (pct < 0 ? '#ef4444' : '#444')
       } else {
-        savedText = t('processing')
-        savedColor = '#444'
+        savedText = t('processing'); savedColor = '#444'
       }
+      const customOpen = item._customOpen ? 'block' : 'none'
       bodyHtml = `
         <div class="info">${t('cardName')}${item.name}</div>
         <div class="info">${t('cardOrig')}${formatSize(item.originSize)}</div>
         <div class="info">${t('cardComp')}${item.compressedBlob ? formatSize(item.compressedBlob.size) : t('processing')}</div>
         <div class="info">${t('cardOut')}${item.compressedBlob && item.outW ? `${item.outW}×${item.outH} px` : t('processing')}</div>
         <div class="info" style="color:${savedColor}">${savedText}</div>
-        ${item.sizeFailed ? `<div class="info" style="color:#ef4444">${t('sizeFailed')}</div>` : ''}
+        ${item.sizeFailed ? `<div class="info fail-note">${t('sizeFailed')}</div>` : ''}
         ${item.compressedUrl ? `<img src="${item.compressedUrl}" draggable="false" />` : `<div>${t('waiting')}</div>`}
+        <div class="move-btns"><button data-move="up" title="${t('moveUp')}">↑</button><button data-move="down" title="${t('moveDown')}">↓</button></div>
         <div style="margin-top:8px">
           <button class="dl-one" data-name="${item.name}">${t('dlOne')}</button>
+          <button class="custom-btn" data-act="toggle">${t('customBtn')}</button>
+        </div>
+        <div class="override-panel" style="display:${customOpen}">
+          <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" data-act="reset" ${item.override ? '' : 'checked'}> ${t('followGlobal')}</label>
+          <div class="ctrl"><span>${t('qualityLabel')}</span><input type="range" data-custom-q min="0.1" max="0.95" step="0.05" value="${eff.quality}"></div>
+          <div class="ctrl"><span>${t('sizeLabel')}</span>
+            <select data-custom-size>
+              <option value="original" ${eff.sizeMode==='original'?'selected':''}>${t('sizeOriginal')}</option>
+              <option value="long" ${eff.sizeMode==='long'?'selected':''}>${t('sizeLong')}</option>
+              <option value="fixed" ${eff.sizeMode==='fixed'?'selected':''}>${t('sizeFixed')}</option>
+            </select>
+          </div>
+          <div class="ctrl"><label style="cursor:pointer"><input type="checkbox" data-custom-target ${eff.targetOn?'checked':''}> ${t('targetOn')}</label>
+            <input type="number" data-custom-val value="${eff.targetVal}" style="width:64px"> <select data-custom-unit><option value="KB" ${eff.targetUnit==='KB'?'selected':''}>KB</option><option value="MB" ${eff.targetUnit==='MB'?'selected':''}>MB</option></select></div>
         </div>
       `
     }
@@ -452,11 +591,21 @@ function renderList(){
     rmBtn.className = 'rm-btn'
     rmBtn.textContent = '×'
     rmBtn.title = '移除'
-    rmBtn.dataset.idx = i
+    rmBtn.dataset.idx = idx
     card.appendChild(rmBtn)
     resultGrid.appendChild(card)
-  })
-  // 单张下载（注意：局部变量不要叫 t，否则会遮住全局翻译函数 t()）
+  }
+
+  if(images.length){
+    addSep(t('sectionImage'))
+    images.forEach(renderOne)
+  }
+  if(pdfs.length){
+    addSep(`${t('sectionPdf')} <small>${t('sectionPdfNote')}</small>`)
+    pdfs.forEach(renderOne)
+  }
+
+  // 单张下载（局部变量用 it，避免遮住全局翻译函数 t()）
   document.querySelectorAll('.dl-one').forEach(btn=>{
     btn.onclick = ()=>{
       const name = btn.dataset.name
@@ -472,7 +621,7 @@ function renderList(){
       if(!it.compressedBlob) return
       const a = document.createElement('a')
       a.href = it.compressedUrl
-      a.download = t('dlNamePrefix') + name.replace(/\.\w+$/, '.jpg')
+      a.download = (outPrefix.value || 'compressed_') + name.replace(/\.\w+$/, '.jpg')
       a.click()
     }
   })
@@ -486,15 +635,44 @@ function renderList(){
       if(it.pdfUrl) URL.revokeObjectURL(it.pdfUrl)
       taskList.splice(idx, 1)
       renderList()
-      const hasImage = taskList.some(x=>x.type==='image')
-      const hasAny = taskList.length > 0
-      const hasPdf = taskList.some(x=>x.type==='pdf')
-      downloadZipBtn.disabled = !hasImage
-      downloadPdfBtn.disabled = !hasAny
-      pdfToJpgBtn.disabled = !hasPdf
+      afterCompress()
     }
   })
+  // ↑/↓ 排序（移动端无拖拽时使用）
+  document.querySelectorAll('[data-move]').forEach(b=>{
+    b.onclick = ()=>{ const idx = +b.closest('.card').dataset.idx; const dir = b.dataset.move==='up' ? -1 : 1; moveItem(idx, dir) }
+  })
+  // 单卡独立设置：展开/收起
+  document.querySelectorAll('.custom-btn').forEach(b=>{
+    b.onclick = ()=>{ const idx = +b.closest('.card').dataset.idx; taskList[idx]._customOpen = !taskList[idx]._customOpen; renderList() }
+  })
+  // 单卡独立设置：修改即写入 override 并重压
+  document.querySelectorAll('.override-panel').forEach(panel=>{
+    const card = panel.closest('.card')
+    const item = taskList[+card.dataset.idx]
+    const qEl = panel.querySelector('[data-custom-q]')
+    const sizeEl = panel.querySelector('[data-custom-size]')
+    const tEl = panel.querySelector('[data-custom-target]')
+    const vEl = panel.querySelector('[data-custom-val]')
+    const uEl = panel.querySelector('[data-custom-unit]')
+    const followEl = panel.querySelector('[data-act="reset"]')
+    const apply = ()=>{
+      if(followEl.checked){ item.override = null }
+      else { item.override = { quality:+qEl.value, sizeMode:sizeEl.value, sizeLong:sizeLong.value, sizeW:sizeW.value, sizeH:sizeH.value, targetOn:tEl.checked, targetVal:vEl.value, targetUnit:uEl.value } }
+      reCompressAll()
+    }
+    ;[qEl, sizeEl, tEl, vEl, uEl].forEach(el=> el.addEventListener('change', apply))
+    followEl.addEventListener('change', ()=>{ if(followEl.checked){ item.override = null; reCompressAll() } })
+  })
   updateEstimate()
+}
+
+function moveItem(idx, dir){
+  const j = idx + dir
+  if(j < 0 || j >= taskList.length) return
+  const tmp = taskList[idx]; taskList[idx] = taskList[j]; taskList[j] = tmp
+  sortBy.value = 'manual'
+  renderList()
 }
 
 function updateEstimate(){
@@ -518,7 +696,7 @@ const i18n = {
     zipBtn:'打包下载 ZIP',
     pdfBtn:'合成/合并 PDF',
     clearBtn:'清空列表',
-    dragHint:'拖拽卡片可手动排序，顺序将决定 ZIP 与 PDF 中的排列',
+    dragHint:'拖拽卡片或点 ↑/↓ 排序；顺序决定 ZIP 与 PDF 中的排列',
     cardName:'文件名：',
     cardOrig:'原图：',
     cardComp:'压缩后：',
@@ -556,7 +734,21 @@ const i18n = {
     targetOn:'限制单张体积',
     targetMax:'不超过',
     targetHint:'自动调整质量（必要时缩小尺寸），使每张不超过此值；开启后质量滑块不生效。选“固定宽高”时只调质量，不改尺寸',
-    sizeFailed:'已到最低质量/尺寸，仍超过目标体积'
+    sizeFailed:'已到最低质量/尺寸，仍超过目标体积',
+    splitNote:'图片会被压缩并进入 ZIP / PDF；导入的 PDF 不参与压缩，仅用于合并或转 JPG',
+    confirmClear:'确定清空列表吗？',
+    outPrefixLabel:'输出前缀：',
+    outPrefixHint:'单张下载与 ZIP 内文件名前缀',
+    folderBtn:'选择文件夹批量导入',
+    failedNote:(n)=>`${n} 张处理失败（无法读取或解码）`,
+    failedShort:'处理失败',
+    customBtn:'单独设置',
+    followGlobal:'跟随全局',
+    sectionImage:'图片',
+    sectionPdf:'PDF 文件',
+    sectionPdfNote:'不参与压缩，仅用于合并或转 JPG',
+    moveUp:'上移',
+    moveDown:'下移'
   },
   en: {
     title:'Image Compressor · ZIP · PDF',
@@ -572,7 +764,7 @@ const i18n = {
     zipBtn:'Download ZIP',
     pdfBtn:'Build / Merge PDF',
     clearBtn:'Clear list',
-    dragHint:'Drag cards to reorder — order affects ZIP & PDF',
+    dragHint:'Drag cards or use ↑/↓ to reorder — order affects ZIP & PDF',
     cardName:'Name: ',
     cardOrig:'Original: ',
     cardComp:'Compressed: ',
@@ -610,7 +802,21 @@ const i18n = {
     targetOn:'Limit file size',
     targetMax:'Max',
     targetHint:'Auto-tunes quality (and shrinks if needed) so each image stays under this size; the quality slider is ignored. With "Fixed W×H" only quality is tuned.',
-    sizeFailed:'Hit minimum quality/size but still over the limit'
+    sizeFailed:'Hit minimum quality/size but still over the limit',
+    splitNote:'Images are compressed into ZIP / PDF; imported PDFs are NOT compressed — only merged or converted to JPG',
+    confirmClear:'Clear the list?',
+    outPrefixLabel:'Output prefix:',
+    outPrefixHint:'Prefix for single download and ZIP filenames',
+    folderBtn:'Import folder…',
+    failedNote:(n)=>`${n} file(s) failed (cannot read or decode)`,
+    failedShort:'Failed',
+    customBtn:'Per-image',
+    followGlobal:'Use global',
+    sectionImage:'Images',
+    sectionPdf:'PDF files',
+    sectionPdfNote:'not compressed; only merged or converted to JPG',
+    moveUp:'Up',
+    moveDown:'Down'
   }
 }
 let lang = localStorage.getItem('lang') || 'zh'
@@ -657,7 +863,7 @@ downloadZipBtn.onclick = async ()=>{
   const used = new Set()
   for(const item of taskList){
     if(!item.compressedBlob) continue
-    let outName = 'compressed_' + item.name.replace(/\.\w+$/, '.jpg')
+    let outName = (outPrefix.value || 'compressed_') + item.name.replace(/\.\w+$/, '.jpg')
     if(used.has(outName)){           // 同名文件加序号去重
       const dot = outName.lastIndexOf('.')
       const base = outName.slice(0, dot)
@@ -692,10 +898,9 @@ async function blobToImage(blob){
   return r ? r.el : null
 }
 async function ensureCompressed(){
-  const q = parseFloat(qualityInput.value)
   for(const item of taskList){
     if(item.type === 'image' && !item.compressedBlob){
-      await compressOne(item, q)
+      await compressOne(item, getEffectiveSettings(item))
     }
   }
   renderList()
