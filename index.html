@@ -45,13 +45,14 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 .lang-btn{position:fixed;top:16px;right:16px;background:#fff;color:#334155;border:1px solid #cbd5e1;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.08);z-index:10}
 .lang-btn:hover{border-color:var(--blue);color:var(--blue)}
 </style>
+<!-- 依赖库已本地化到 ./libs，无需联网（双击 file:// 也能用） -->
 <!-- JSZip 用于打包ZIP -->
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="./libs/jszip.min.js"></script>
 <!-- jsPDF 与 pdf-lib 用于生成/合并 PDF -->
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="./libs/jspdf.umd.min.js"></script>
+<script src="./libs/pdf-lib.min.js"></script>
 <!-- pdf.js 用于将 PDF 页面渲染为 JPG 图片 -->
-<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="./libs/pdf.min.js"></script>
 </head>
 <body>
 <button id="langBtn" class="lang-btn">EN</button>
@@ -128,7 +129,13 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 const { jsPDF } = window.jspdf;
 // 配置 pdf.js 的 worker（用于把 PDF 页面渲染为图片）
 if(window.pdfjsLib){
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
+  // file:// 协议下浏览器通常禁止加载本地 Worker，改用主线程运行更稳妥；
+  // 通过 http(s) 部署时则使用本地 worker 提升性能
+  if(location.protocol === 'file:'){
+    pdfjsLib.disableWorker = true
+  } else {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = './libs/pdf.worker.min.js'
+  }
 }
 const dropBox = document.getElementById('dropBox')
 const fileInput = document.getElementById('fileInput')
