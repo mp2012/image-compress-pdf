@@ -47,6 +47,8 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 <!-- jsPDF 与 pdf-lib 用于生成/合并 PDF -->
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<!-- pdf.js 用于将 PDF 页面渲染为 JPG 图片 -->
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 </head>
 <body>
 <button id="langBtn" class="lang-btn">EN</button>
@@ -87,7 +89,8 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 </div>
 <div class="btns">
   <button id="downloadZipBtn" data-i18n="zipBtn" disabled>打包下载 ZIP</button>
-  <button class="pdf-btn" id="downloadPdfBtn" data-i18n="pdfBtn" disabled>合成 PDF（铺满A4）</button>
+  <button class="pdf-btn" id="downloadPdfBtn" data-i18n="pdfBtn" disabled>合成/合并 PDF</button>
+  <button id="pdfToJpgBtn" data-i18n="pdfToJpgBtn" disabled>PDF 转 JPG（ZIP）</button>
   <button class="clear-btn" id="clearBtn" data-i18n="clearBtn">清空列表</button>
 </div>
 <div id="pdfEstimate" class="estimate"></div>
@@ -100,6 +103,10 @@ button.dl-one:hover:not(:disabled){filter:brightness(1.06)}
 
 <script>
 const { jsPDF } = window.jspdf;
+// 配置 pdf.js 的 worker（用于把 PDF 页面渲染为图片）
+if(window.pdfjsLib){
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
+}
 const dropBox = document.getElementById('dropBox')
 const fileInput = document.getElementById('fileInput')
 const qualityInput = document.getElementById('quality')
@@ -107,6 +114,7 @@ const qualityVal = document.getElementById('qualityVal')
 const resultGrid = document.getElementById('resultGrid')
 const downloadZipBtn = document.getElementById('downloadZipBtn')
 const downloadPdfBtn = document.getElementById('downloadPdfBtn')
+const pdfToJpgBtn = document.getElementById('pdfToJpgBtn')
 const clearBtn = document.getElementById('clearBtn')
 const sortBy = document.getElementById('sortBy')
 const pdfMode = document.getElementById('pdfMode')
@@ -148,6 +156,7 @@ clearBtn.onclick = ()=>{
   renderList()
   downloadZipBtn.disabled = true
   downloadPdfBtn.disabled = true
+  pdfToJpgBtn.disabled = true
 }
 
 sortBy.onchange = ()=>{
@@ -194,8 +203,10 @@ async function reCompressAll(){
   renderList()
   const hasImage = taskList.some(i=>i.type === 'image')
   const hasAny = taskList.length > 0
+  const hasPdf = taskList.some(i=>i.type === 'pdf')
   downloadZipBtn.disabled = !hasImage
   downloadPdfBtn.disabled = !hasAny
+  pdfToJpgBtn.disabled = !hasPdf
 }
 
 function compressOne(task, quality){
@@ -360,7 +371,9 @@ const i18n = {
     modeGrid:'一页多图拼版',
     dlNamePrefix:'压缩_',
     zipName:'compressed_images.zip',
-    pdfName:'merged.pdf'
+    pdfName:'merged.pdf',
+    pdfToJpgBtn:'PDF 转 JPG（ZIP）',
+    pdfToJpgName:'pdf_images.zip'
   },
   en: {
     title:'Image Compressor · ZIP · PDF',
@@ -400,7 +413,9 @@ const i18n = {
     modeGrid:'Multi-image grid',
     dlNamePrefix:'compressed_',
     zipName:'compressed_images.zip',
-    pdfName:'merged.pdf'
+    pdfName:'merged.pdf',
+    pdfToJpgBtn:'PDF → JPG (ZIP)',
+    pdfToJpgName:'pdf_images.zip'
   }
 }
 let lang = localStorage.getItem('lang') || 'zh'
@@ -590,6 +605,46 @@ downloadPdfBtn.onclick = async ()=>{
     downloadPdfBtn.textContent = t('pdfBtn')
   }
 }
+
+// 将导入的 PDF 文件逐页渲染为 JPG，按原文件名命名，多页加编号，打包成 ZIP
+async function renderPdfToJpg(item, zip, quality){
+  const baseName = item.name.replace(/\.\w+$/, '')
+  const data = await item.originFile.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({data}).promise
+  const n = pdf.numPages
+  for(let p=1; p<=n; p++){
+    const page = await pdf.getPage(p)
+    const viewport = page.getViewport({scale:2})
+    const canvas = document.createElement('canvas')
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+    const ctx = canvas.getContext('2d')
+    await page.render({canvasContext:ctx, viewport}).promise
+    const blob = await new Promise(r=>canvas.toBlob(r, 'image/jpeg', quality))
+    const suffix = n>1 ? `_${p}` : ''
+    let fname = `${baseName}${suffix}.jpg`
+    let uniq = fname, k=1
+    while(zip.files[uniq]) uniq = `${baseName}${suffix}_${k++}.jpg`
+    zip.file(uniq, blob)
+  }
+}
+pdfToJpgBtn.onclick = async ()=>{
+  pdfToJpgBtn.disabled = true
+  try{
+    const q = parseFloat(qualityInput.value)
+    const pdfItems = taskList.filter(i=>i.type === 'pdf')
+    if(pdfItems.length === 0) return
+    const zip = new JSZip()
+    for(const item of pdfItems){
+      await renderPdfToJpg(item, zip, q)
+    }
+    const blob = await zip.generateAsync({type:'blob'})
+    triggerDownload(blob, t('pdfToJpgName'))
+  } finally {
+    pdfToJpgBtn.disabled = false
+  }
+}
+
 applyLang()
 </script>
 </body>
