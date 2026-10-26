@@ -289,14 +289,17 @@ function formatSize(b){
 async function handleFiles(files){
   for(const f of files){
     const lower = f.name.toLowerCase()
-    if(f.type === 'application/pdf' || lower.endsWith('.pdf')){
+    // 注意：拖拽/文件夹导入时浏览器常把 file.type 置为空字符串，必须按扩展名兜底判断
+    const isPdf = f.type === 'application/pdf' || lower.endsWith('.pdf')
+    const isImage = f.type.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|heic|tiff?)$/i.test(lower)
+    if(isPdf){
       let pages = 0
       try{
         const pdf = await PDFLib.PDFDocument.load(await f.arrayBuffer())
         pages = pdf.getPageCount()
       }catch(e){}
       taskList.push({ type:'pdf', name: f.name, originFile: f, originSize: f.size, pages, pdfUrl:'' })
-    } else if(f.type.startsWith('image/')){
+    } else if(isImage){
       taskList.push({ type:'image', name: f.name, originFile: f, originSize: f.size, compressedBlob: null, compressedUrl: '' })
     }
   }
@@ -754,7 +757,9 @@ const i18n = {
     sectionPdf:'PDF 文件',
     sectionPdfNote:'不参与压缩，仅用于合并或转 JPG',
     moveUp:'上移',
-    moveDown:'下移'
+    moveDown:'下移',
+    noContent:'没有可合成的图片或 PDF（图片可能未被识别，请检查文件类型）',
+    genFailed:'合成 PDF 失败'
   },
   en: {
     title:'Image Compressor · ZIP · PDF',
@@ -822,7 +827,9 @@ const i18n = {
     sectionPdf:'PDF files',
     sectionPdfNote:'not compressed; only merged or converted to JPG',
     moveUp:'Up',
-    moveDown:'Down'
+    moveDown:'Down',
+    noContent:'No images or PDFs to combine (images may not be recognized — check file types)',
+    genFailed:'Failed to generate PDF'
   }
 }
 let lang = localStorage.getItem('lang') || 'zh'
@@ -1003,8 +1010,15 @@ downloadPdfBtn.onclick = async ()=>{
       fitDraw(page, img, pw, ph)
     }
 
+    if(doc.getPageCount() === 0){
+      alert(t('noContent'))
+      return
+    }
     const out = await doc.save()
     triggerDownload(new Blob([out], {type:'application/pdf'}), t('pdfName'))
+  } catch(e){
+    alert(t('genFailed') + (e && e.message ? (': ' + e.message) : ''))
+    console.error(e)
   } finally {
     downloadPdfBtn.disabled = false
     downloadZipBtn.disabled = false
